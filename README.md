@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Physical_devices_and_queue_families
+Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Setup/Logical_device_and_queues
 
 # Requirements
 

@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <map>
 
 class VulkanApp {
 public:
@@ -21,6 +22,7 @@ public:
     }
 private:
     vk::Instance instance;
+    vk::PhysicalDevice physicalDevice;
     vk::DebugUtilsMessengerEXT debugMessenger;
     GLFWwindow* window;
 
@@ -44,9 +46,14 @@ private:
         std::cout << "created instance successfully" << std::endl;
 
         setupDebugMessenger();
-        
         std::cout << "debug messenger have been set up successfully" << std::endl;
+    
+        showInstanceInfo();
 
+        pickPhysicalDevice();
+    }
+
+    void showInstanceInfo() {
         std::vector<vk::LayerProperties> layerProperties = vk::enumerateInstanceLayerProperties();
         std::cout << layerProperties.size() << " layers supported:\n";
         for (const auto& layer : layerProperties) {
@@ -58,6 +65,33 @@ private:
         for (const auto& ext : extProperties) {
             std::cout << '\t' << ext.extensionName << std::endl;
         }
+    }
+
+    void pickPhysicalDevice() {
+        std::vector<vk::PhysicalDevice> pDevices = instance.enumeratePhysicalDevices();
+        std::multimap<int, VkPhysicalDevice> candidates;
+
+        if (pDevices.empty()) {
+            throw std::runtime_error("failed to find GPUs with Vulkan support!");
+        }
+
+        std::cout << pDevices.size() << " devices found:\n";
+        for (const auto& dev : pDevices) {
+            std::cout << '\t' << dev.getProperties().deviceName << std::endl;
+        }
+
+        for (const auto& dev : pDevices) {
+            int score = vklearn::rateDeviceSuitability(dev);
+            candidates.insert(std::make_pair(score, dev));
+        }
+
+        if (candidates.rbegin()->first > 0) {
+            physicalDevice = candidates.rbegin()->second;
+        } else {
+            throw std::runtime_error("failed to find a suitable GPU!");
+        }
+
+        std::cout << "Use device: " << physicalDevice.getProperties().deviceName << std::endl;
     }
 
     void setupDebugMessenger() {

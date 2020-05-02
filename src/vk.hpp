@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <iostream>
 #include <vector>
+#include <optional>
+#include <vulkan/vulkan.hpp>
 
 /// NOTE: PFN/pfn denotes that a type is a function pointer, or that a variable is of a pointer type.
 PFN_vkCreateDebugUtilsMessengerEXT pfnVkCreateDebugUtilsMessengerEXT;
@@ -26,6 +28,14 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
 }
 
 namespace vklearn {
+
+    struct QueueFamilyIndices {
+        std::optional<uint32_t> graphicsFamily;
+
+        bool isComplete() {
+            return graphicsFamily.has_value();
+        }
+    };
 
     #ifdef NDEBUG
         const bool enableValidationLayers = false;
@@ -101,7 +111,6 @@ namespace vklearn {
         return true;
     }
 
-
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
         VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
         VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -111,6 +120,46 @@ namespace vklearn {
         std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
 
         return VK_FALSE;
+    }
+
+    QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device) {
+        // TODO: take required queue flags parameter
+        QueueFamilyIndices indices;
+        std::vector<vk::QueueFamilyProperties> queueFamilies = device.getQueueFamilyProperties();
+        int idx = 0;
+        for (const auto& queueFamily : queueFamilies) {
+            /// check transferable data type (graphics, compute, transfer, sparse, protected)
+            if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
+                indices.graphicsFamily = idx;
+            }
+
+            if (indices.isComplete()) {
+                break;
+            }
+
+            idx++;
+        }
+        return indices;
+    }
+
+    int rateDeviceSuitability(vk::PhysicalDevice device) {
+        // TODO: take rating function
+        int score = 0;
+        vk::PhysicalDeviceProperties props = device.getProperties();
+        vk::PhysicalDeviceFeatures features = device.getFeatures();
+        auto indices = findQueueFamilies(device);
+
+        if (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+            score += 1000;
+        }
+
+        score += props.limits.maxImageDimension2D;
+
+        if (!features.geometryShader || !indices.isComplete()) {
+            return 0;
+        }
+
+        return score;
     }
 
     namespace boilerplate
