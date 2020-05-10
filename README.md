@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Setup/Logical_device_and_queues
+Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Presentation/Window_surface
 
 # Requirements
 
