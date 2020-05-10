@@ -21,6 +21,8 @@ public:
         cleanup();
     }
 private:
+    vk::Device device;
+    vk::Queue graphicsQueue;
     vk::Instance instance;
     vk::PhysicalDevice physicalDevice;
     vk::DebugUtilsMessengerEXT debugMessenger;
@@ -51,6 +53,8 @@ private:
         showInstanceInfo();
 
         pickPhysicalDevice();
+
+        createLogicalDevice();
     }
 
     void showInstanceInfo() {
@@ -94,6 +98,37 @@ private:
         std::cout << "Use device: " << physicalDevice.getProperties().deviceName << std::endl;
     }
 
+    void createLogicalDevice() {
+        auto indices = vklearn::findQueueFamilies(physicalDevice);
+        float queuePriority = 1.0f;
+        vk::DeviceQueueCreateInfo queueCreateInfo(
+            {},
+            indices.graphicsFamily.value(),
+            1,
+            &queuePriority
+        );
+
+        vk::PhysicalDeviceFeatures deviceFeatures{};
+        vk::DeviceCreateInfo createInfo(
+            {},
+            1,
+            &queueCreateInfo,
+            0, // no effect on latest implementation
+            {}, // same as above
+            0,
+            {},
+            &deviceFeatures
+        );
+        if (vklearn::enableValidationLayers) {
+            createInfo.enabledLayerCount = static_cast<uint32_t>(vklearn::validationLayers.size());
+            createInfo.ppEnabledLayerNames = vklearn::validationLayers.data();
+        }
+        // for compatibility with older implementations
+
+        device = physicalDevice.createDevice(createInfo);
+        graphicsQueue = device.getQueue(indices.graphicsFamily.value(), 0);
+    }
+
     void setupDebugMessenger() {
         if (!vklearn::enableValidationLayers) return;
 
@@ -113,6 +148,7 @@ private:
     }
     
     void cleanup() {
+        device.destroy();
         if (vklearn::enableValidationLayers) {
             instance.destroyDebugUtilsMessengerEXT(debugMessenger, nullptr);
         }
