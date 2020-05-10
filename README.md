@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Presentation/Window_surface
+Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Presentation/Swap_chain
 
 # Requirements
 

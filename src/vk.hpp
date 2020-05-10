@@ -31,9 +31,10 @@ namespace vklearn {
 
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;
+        std::optional<uint32_t> presentFamily;
 
         bool isComplete() {
-            return graphicsFamily.has_value();
+            return graphicsFamily.has_value() && presentFamily.has_value();
         }
     };
 
@@ -122,7 +123,7 @@ namespace vklearn {
         return VK_FALSE;
     }
 
-    QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device) {
+    QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
         // TODO: take required queue flags parameter
         QueueFamilyIndices indices;
         std::vector<vk::QueueFamilyProperties> queueFamilies = device.getQueueFamilyProperties();
@@ -131,6 +132,10 @@ namespace vklearn {
             /// check transferable data type (graphics, compute, transfer, sparse, protected)
             if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
                 indices.graphicsFamily = idx;
+            }
+
+            if (device.getSurfaceSupportKHR(idx, surface)) {
+                indices.presentFamily = idx;
             }
 
             if (indices.isComplete()) {
@@ -142,12 +147,12 @@ namespace vklearn {
         return indices;
     }
 
-    int rateDeviceSuitability(vk::PhysicalDevice device) {
+    int rateDeviceSuitability(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
         // TODO: take rating function
         int score = 0;
         vk::PhysicalDeviceProperties props = device.getProperties();
         vk::PhysicalDeviceFeatures features = device.getFeatures();
-        auto indices = findQueueFamilies(device);
+        auto indices = findQueueFamilies(device, surface);
 
         if (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
             score += 1000;

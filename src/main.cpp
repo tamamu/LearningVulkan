@@ -1,6 +1,7 @@
 #include "vulkan.h"
 #include "glfw.h"
 #include "vk.hpp"
+#include <vulkan/vulkan.hpp>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <vector>
 #include <map>
+#include <set>
 
 class VulkanApp {
 public:
@@ -23,8 +25,10 @@ public:
 private:
     vk::Device device;
     vk::Queue graphicsQueue;
+    vk::Queue presentQueue;
     vk::Instance instance;
     vk::PhysicalDevice physicalDevice;
+    vk::SurfaceKHR surface;
     vk::DebugUtilsMessengerEXT debugMessenger;
     GLFWwindow* window;
 
@@ -52,6 +56,8 @@ private:
     
         showInstanceInfo();
 
+        createSurface();
+
         pickPhysicalDevice();
 
         createLogicalDevice();
@@ -71,6 +77,14 @@ private:
         }
     }
 
+    void createSurface() {
+        VkSurfaceKHR _surface;
+        if (glfwCreateWindowSurface(instance, window, nullptr, &_surface) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create window surface!");
+        }
+        surface = vk::SurfaceKHR(_surface);
+    }
+
     void pickPhysicalDevice() {
         std::vector<vk::PhysicalDevice> pDevices = instance.enumeratePhysicalDevices();
         std::multimap<int, VkPhysicalDevice> candidates;
@@ -85,7 +99,7 @@ private:
         }
 
         for (const auto& dev : pDevices) {
-            int score = vklearn::rateDeviceSuitability(dev);
+            int score = vklearn::rateDeviceSuitability(dev, surface);
             candidates.insert(std::make_pair(score, dev));
         }
 
@@ -99,20 +113,29 @@ private:
     }
 
     void createLogicalDevice() {
-        auto indices = vklearn::findQueueFamilies(physicalDevice);
-        float queuePriority = 1.0f;
-        vk::DeviceQueueCreateInfo queueCreateInfo(
-            {},
+        auto indices = vklearn::findQueueFamilies(physicalDevice, surface);
+        std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
+        std::set<uint32_t> uniqueQueueFamilies = {
             indices.graphicsFamily.value(),
-            1,
-            &queuePriority
-        );
+            indices.presentFamily.value(),
+        };
+
+        float queuePriority = 1.0f;
+        for (uint32_t queueFamily : uniqueQueueFamilies) {
+            vk::DeviceQueueCreateInfo queueCreateInfo(
+                {},
+                queueFamily,
+                1,
+                &queuePriority
+            );
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
 
         vk::PhysicalDeviceFeatures deviceFeatures{};
         vk::DeviceCreateInfo createInfo(
             {},
-            1,
-            &queueCreateInfo,
+            static_cast<uint32_t>(queueCreateInfos.size()),
+            queueCreateInfos.data(),
             0, // no effect on latest implementation
             {}, // same as above
             0,
@@ -127,6 +150,7 @@ private:
 
         device = physicalDevice.createDevice(createInfo);
         graphicsQueue = device.getQueue(indices.graphicsFamily.value(), 0);
+        presentQueue = device.getQueue(indices.presentFamily.value(), 0);
     }
 
     void setupDebugMessenger() {
@@ -152,6 +176,7 @@ private:
         if (vklearn::enableValidationLayers) {
             instance.destroyDebugUtilsMessengerEXT(debugMessenger, nullptr);
         }
+        instance.destroySurfaceKHR(surface);
         instance.destroy();
 
         glfwDestroyWindow(window);
