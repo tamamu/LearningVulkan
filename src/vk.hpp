@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <vector>
+#include <set>
 #include <optional>
 #include <vulkan/vulkan.hpp>
 
@@ -46,6 +47,10 @@ namespace vklearn {
 
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation",
+    };
+
+    const std::vector<const char*> requiredDeviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
 
     std::vector<const char*> getRequiredExtensions() {
@@ -147,6 +152,16 @@ namespace vklearn {
         return indices;
     }
 
+    bool checkDeviceExtensionSupport(vk::PhysicalDevice device, std::vector<const char*> deviceExtensions) {
+        std::vector<vk::ExtensionProperties> availableExtensions = device.enumerateDeviceExtensionProperties(nullptr);
+        std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+        for (const auto& extension : availableExtensions) {
+            requiredExtensions.erase(static_cast<const char*>(extension.extensionName));
+        }
+
+        return requiredExtensions.empty();
+    }
+
     int rateDeviceSuitability(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
         // TODO: take rating function
         int score = 0;
@@ -160,7 +175,7 @@ namespace vklearn {
 
         score += props.limits.maxImageDimension2D;
 
-        if (!features.geometryShader || !indices.isComplete()) {
+        if (!features.geometryShader || !indices.isComplete() || !checkDeviceExtensionSupport(device, requiredDeviceExtensions)) {
             return 0;
         }
 

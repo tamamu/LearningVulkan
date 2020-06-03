@@ -138,8 +138,8 @@ private:
             queueCreateInfos.data(),
             0, // no effect on latest implementation
             {}, // same as above
-            0,
-            {},
+            vklearn::requiredDeviceExtensions.size(),
+            vklearn::requiredDeviceExtensions.data(),
             &deviceFeatures
         );
         if (vklearn::enableValidationLayers) {
