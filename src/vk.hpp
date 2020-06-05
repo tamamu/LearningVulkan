@@ -6,6 +6,7 @@
 #include <vector>
 #include <set>
 #include <optional>
+#include <algorithm>
 #include <vulkan/vulkan.hpp>
 
 /// NOTE: PFN/pfn denotes that a type is a function pointer, or that a variable is of a pointer type.
@@ -37,6 +38,35 @@ namespace vklearn {
         bool isComplete() {
             return graphicsFamily.has_value() && presentFamily.has_value();
         }
+    };
+
+    struct SwapChainSupportDetails {
+        vk::SurfaceCapabilitiesKHR capabilities;
+        std::vector<vk::SurfaceFormatKHR> formats;
+        std::vector<vk::PresentModeKHR> presentModes;
+
+        SwapChainSupportDetails(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
+            capabilities = device.getSurfaceCapabilitiesKHR(surface);
+            formats = device.getSurfaceFormatsKHR(surface);
+            presentModes = device.getSurfacePresentModesKHR(surface);
+        }
+
+        bool isComplete() {
+            return !formats.empty() && !presentModes.empty();
+        }
+    };
+
+    struct SwapChainDetails {
+        vk::SurfaceFormatKHR format;
+        vk::PresentModeKHR presentMode;
+        vk::Extent2D extent;
+
+        SwapChainDetails() {}
+
+        SwapChainDetails(vk::SurfaceFormatKHR format,
+            vk::PresentModeKHR presentMode,
+            vk::Extent2D extent)
+            : format(format), presentMode(presentMode), extent(extent) {}
     };
 
     #ifdef NDEBUG
@@ -175,11 +205,74 @@ namespace vklearn {
 
         score += props.limits.maxImageDimension2D;
 
-        if (!features.geometryShader || !indices.isComplete() || !checkDeviceExtensionSupport(device, requiredDeviceExtensions)) {
+        if (!features.geometryShader) {
+            std::cerr << "Not supported: Geometry shader" << std::endl;
+            return 0;
+        }
+
+        if (!indices.isComplete()) {
+            std::cerr << "Not found: Required queue families" << std::endl;
+            return 0;
+        }
+
+        if (!checkDeviceExtensionSupport(device, requiredDeviceExtensions)) {
+            std::cerr << "Not supported: Required device extensions" << std::endl;
+            for (auto extension : requiredDeviceExtensions) {
+                std::cerr << "\t" << extension << std::endl;
+            }
+            return 0;
+        }
+
+        SwapChainSupportDetails swapChainSupport(device, surface);
+        if (!swapChainSupport.isComplete()) {
+            std::cerr << "Not supported: Swap chain" << std::endl;
             return 0;
         }
 
         return score;
+    }
+
+    vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
+        // B8G8R8A8_SRGB is most common one
+        for (const auto& availableFormat : availableFormats) {
+            if (availableFormat.format == vk::Format::eB8G8R8A8Srgb
+                && availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+                return availableFormat;
+            }
+        }
+
+        return availableFormats[0];
+    }
+
+    vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
+        // MAILBOX is used to implement triple buffering,
+        // which allows you to avoid tearing with significantly less latency
+        for (const auto& availablePresentMode : availablePresentModes) {
+            if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+                return availablePresentMode;
+            }
+        }
+
+        return vk::PresentModeKHR::eFifo;
+    }
+
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, const uint32_t width, const uint32_t height) {
+        if (capabilities.currentExtent.width != UINT32_MAX) {
+            return capabilities.currentExtent;
+        } else {
+            vk::Extent2D actualExtent(width, height);
+            actualExtent.width = std::clamp(
+                actualExtent.width,
+                capabilities.minImageExtent.width,
+                capabilities.maxImageExtent.width
+            );
+            actualExtent.height = std::clamp(
+                actualExtent.height,
+                capabilities.minImageExtent.height,
+                capabilities.maxImageExtent.height
+            );
+            return actualExtent;
+        }
     }
 
     namespace boilerplate
@@ -211,6 +304,62 @@ namespace vklearn {
                 throw std::runtime_error("failed to create instance");
             }
             return instance;
+        }
+
+        std::tuple<vk::SwapchainKHR, SwapChainDetails> SwapchainKHR(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SurfaceKHR surface, uint32_t width, uint32_t height) {
+            vklearn::SwapChainSupportDetails swapChainSupport(physicalDevice, surface);
+            vk::SurfaceFormatKHR surfaceFormat = vklearn::chooseSwapSurfaceFormat(swapChainSupport.formats);
+            vk::PresentModeKHR presentMode = vklearn::chooseSwapPresentMode(swapChainSupport.presentModes);
+            vk::Extent2D extent = vklearn::chooseSwapExtent(swapChainSupport.capabilities, width, height);
+            uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+            if (swapChainSupport.capabilities.maxImageCount > 0 &&
+                imageCount > swapChainSupport.capabilities.maxImageCount) {
+                imageCount = swapChainSupport.capabilities.maxImageCount;
+            }
+
+            vk::SwapchainCreateInfoKHR createInfo(
+                {},
+                surface,
+                imageCount,
+                surfaceFormat.format,
+                surfaceFormat.colorSpace,
+                extent,
+                1, // the amount of layers is always 1 unless you are developing a stereoscopic 3D application
+                vk::ImageUsageFlagBits::eColorAttachment);
+            
+            vklearn::QueueFamilyIndices indices = vklearn::findQueueFamilies(physicalDevice, surface);
+            uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+            if (indices.graphicsFamily != indices.presentFamily) {
+                // CONCURRENT means images can be used across multiple queue families without explicit ownership transfers
+                createInfo.imageSharingMode = vk::SharingMode::eConcurrent;
+                createInfo.queueFamilyIndexCount = 2;
+                createInfo.pQueueFamilyIndices = queueFamilyIndices;
+                std::cerr << "Image Sharing Mode = CONCURRENT" << std::endl;
+            } else {
+                // EXCLUSIVE means an image is owned by one queue family at a time and ownership must be explicitly transfered before using it in another queue family
+                createInfo.imageSharingMode = vk::SharingMode::eExclusive;
+                createInfo.queueFamilyIndexCount = 0;
+                createInfo.pQueueFamilyIndices = nullptr;
+                std::cerr << "Image Sharing Mode = EXCLUSIVE" << std::endl;
+            }
+            createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+            // compositeAlpha specifies if the alpha channel should be used for blending with other windows in the window system
+            // OPAQUE means ignore the alpha channel
+            createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+            createInfo.presentMode = presentMode;
+            // you'll get the best performance by enabling clipping
+            createInfo.clipped = VK_TRUE;
+            // TODO: https://vulkan-tutorial.com/en/Drawing_a_triangle/Swap_chain_recreation
+            createInfo.oldSwapchain = nullptr;
+            vk::SwapchainKHR swapChain;
+            if(device.createSwapchainKHR(&createInfo, nullptr, &swapChain) != vk::Result::eSuccess) {
+                throw std::runtime_error("failed to create swap chain!");
+            }
+
+            SwapChainDetails details(surfaceFormat, presentMode, extent);
+
+            return std::make_tuple(swapChain, details);
         }
 
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT(PFN_vkDebugUtilsMessengerCallbackEXT pfnUserCallback) {

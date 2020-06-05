@@ -14,6 +14,9 @@
 #include <map>
 #include <set>
 
+#define WIDTH 800
+#define HEIGHT 600
+
 class VulkanApp {
 public:
     void run() {
@@ -29,6 +32,10 @@ private:
     vk::Instance instance;
     vk::PhysicalDevice physicalDevice;
     vk::SurfaceKHR surface;
+    vk::SwapchainKHR swapChain;
+    vklearn::SwapChainDetails swapChainDetails;
+    std::vector<vk::Image> swapChainImages;
+    std::vector<vk::ImageView> swapChainImageViews;
     vk::DebugUtilsMessengerEXT debugMessenger;
     GLFWwindow* window;
 
@@ -61,6 +68,10 @@ private:
         pickPhysicalDevice();
 
         createLogicalDevice();
+
+        createSwapChain();
+
+        createImageViews();
     }
 
     void showInstanceInfo() {
@@ -153,6 +164,37 @@ private:
         presentQueue = device.getQueue(indices.presentFamily.value(), 0);
     }
 
+    void createSwapChain() {
+        std::tie(swapChain, swapChainDetails) = vklearn::boilerplate::SwapchainKHR(physicalDevice, device, surface, WIDTH, HEIGHT);
+        swapChainImages = device.getSwapchainImagesKHR(swapChain);
+    }
+
+    void createImageViews() {
+        swapChainImageViews = std::vector<vk::ImageView>(swapChainImages.size());
+        for (size_t idx = 0; idx < swapChainImages.size(); ++idx) {
+            vk::ImageViewCreateInfo createInfo(
+                {},
+                swapChainImages[idx],
+                vk::ImageViewType::e2D,
+                swapChainDetails.format.format,
+                vk::ComponentMapping(
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity),
+                vk::ImageSubresourceRange(
+                    vk::ImageAspectFlagBits::eColor,
+                    0,
+                    1,
+                    0,
+                    1)
+                );
+            if (device.createImageView(&createInfo, nullptr, &swapChainImageViews[idx]) != vk::Result::eSuccess) {
+                throw std::runtime_error("failed to create image views!");
+            }
+        }
+    }
+
     void setupDebugMessenger() {
         if (!vklearn::enableValidationLayers) return;
 
@@ -172,6 +214,10 @@ private:
     }
     
     void cleanup() {
+        for (auto imageView : swapChainImageViews) {
+            device.destroyImageView(imageView);
+        }
+        device.destroySwapchainKHR(swapChain);
         device.destroy();
         if (vklearn::enableValidationLayers) {
             instance.destroyDebugUtilsMessengerEXT(debugMessenger, nullptr);
