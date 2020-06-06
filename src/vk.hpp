@@ -2,6 +2,7 @@
 #include "glfw.h"
 
 #include <stdexcept>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #include <set>
@@ -273,6 +274,30 @@ namespace vklearn {
             );
             return actualExtent;
         }
+    }
+
+    vk::ShaderModule createShaderModuleFromFile(vk::Device device, const std::string& filename) {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("failed to open file!");
+        }
+
+        size_t fileSize = (size_t) file.tellg();
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+
+        vk::ShaderModuleCreateInfo createInfo(
+            {},
+            buffer.size(),
+            reinterpret_cast<const uint32_t*>(buffer.data()));
+        vk::ShaderModule shaderModule;
+        if (device.createShaderModule(&createInfo, nullptr, &shaderModule) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create shader module!");
+        }
+
+        return shaderModule;
     }
 
     namespace boilerplate

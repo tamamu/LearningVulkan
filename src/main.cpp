@@ -16,6 +16,8 @@
 
 #define WIDTH 800
 #define HEIGHT 600
+#define VERTEX_SHADER_PATH "spir-v/static_triangle.vert"
+#define FRAGMENT_SHADER_PATH "spir-v/static_red.frag"
 
 class VulkanApp {
 public:
@@ -72,6 +74,8 @@ private:
         createSwapChain();
 
         createImageViews();
+
+        createGraphicsPipeline();
     }
 
     void showInstanceInfo() {
@@ -193,6 +197,15 @@ private:
                 throw std::runtime_error("failed to create image views!");
             }
         }
+    }
+
+    void createGraphicsPipeline() {
+        vk::ShaderModule vertShaderModule = vklearn::createShaderModuleFromFile(device, VERTEX_SHADER_PATH);
+        vk::ShaderModule fragShaderModule = vklearn::createShaderModuleFromFile(device, FRAGMENT_SHADER_PATH);
+
+        device.destroyShaderModule(fragShaderModule);
+        device.destroyShaderModule(vertShaderModule);
+        // TODO: https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Shader_modules#page_Shader-stage-creation
     }
 
     void setupDebugMessenger() {

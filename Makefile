@@ -1,14 +1,23 @@
 CFLAGS = -std=c++17 -Wall -Wextra
 LDFLAGS = `pkg-config --static --libs glfw3` -lvulkan
 CXX = clang++
+GLSLS = $(foreach glsl,$(shell ls src/shaders),spir-v/$(notdir $(glsl)).spv)
+.SUFFIXES: .vert .frag
+.PHONY: spir-v/%.spv test clean
 
-.PHONY: test clean
+spir-v/%.vert.spv: src/shaders/%.vert
+	mkdir -p spir-v
+	glslc $< -o $@
 
-release: src/*.cpp src/*.hpp src/*.h
+spir-v/%.frag.spv: src/shaders/%.frag
+	mkdir -p spir-v
+	glslc $< -o $@
+
+release: src/*.cpp src/*.hpp src/*.h $(GLSLS)
 	mkdir -p bin
 	$(CXX) $(CFLAGS) -o bin/VulkanApp src/main.cpp $(LDFLAGS)
 
-debug: src/main.cpp
+debug: src/main.cpp $(GLSLS)
 	$(CXX) $(CFLAGS) src/main.cpp $(LDFLAGS)
 
 test: debug
