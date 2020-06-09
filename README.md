@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Introduction
+Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Swap_chain_recreation
 
 # Requirements
 
