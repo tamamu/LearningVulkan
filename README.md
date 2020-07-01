@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/en/Drawing_a_triangle/Swap_chain_recreation
+Next => https://vulkan-tutorial.com/Vertex_buffers/Vertex_input_description
 
 # Requirements
 
