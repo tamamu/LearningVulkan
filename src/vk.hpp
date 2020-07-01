@@ -1,6 +1,7 @@
 #include "vulkan.h"
 #include "glfw.h"
 
+#include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <fstream>
 #include <iostream>
@@ -248,19 +249,27 @@ namespace vklearn {
     vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
         // MAILBOX is used to implement triple buffering,
         // which allows you to avoid tearing with significantly less latency
+        std::cout << "Available present modes:" << std::endl;
+        for (const auto& availablePresentMode : availablePresentModes) {
+            std::cout << "\t" << to_string(availablePresentMode) << std::endl;
+        }
         for (const auto& availablePresentMode : availablePresentModes) {
             if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+                std::cout << "Use VK_PRESENT_MODE_MAILBOX_KHR" << std::endl;
                 return availablePresentMode;
             }
         }
-
+        std::cout << "Use VK_PRESENT_MODE_FIFO_KHR" << std::endl;
         return vk::PresentModeKHR::eFifo;
     }
 
-    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, const uint32_t width, const uint32_t height) {
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) {
         if (capabilities.currentExtent.width != UINT32_MAX) {
             return capabilities.currentExtent;
         } else {
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+            std::cout << width << "," << height << std::endl;
             vk::Extent2D actualExtent(width, height);
             actualExtent.width = std::clamp(
                 actualExtent.width,
@@ -331,11 +340,11 @@ namespace vklearn {
             return instance;
         }
 
-        std::tuple<vk::SwapchainKHR, SwapChainDetails> SwapchainKHR(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SurfaceKHR surface, uint32_t width, uint32_t height) {
+        std::tuple<vk::SwapchainKHR, SwapChainDetails> SwapchainKHR(vk::PhysicalDevice physicalDevice, vk::Device device, vk::SurfaceKHR surface, GLFWwindow* window, vk::SwapchainKHR* oldSwapchain) {
             vklearn::SwapChainSupportDetails swapChainSupport(physicalDevice, surface);
             vk::SurfaceFormatKHR surfaceFormat = vklearn::chooseSwapSurfaceFormat(swapChainSupport.formats);
             vk::PresentModeKHR presentMode = vklearn::chooseSwapPresentMode(swapChainSupport.presentModes);
-            vk::Extent2D extent = vklearn::chooseSwapExtent(swapChainSupport.capabilities, width, height);
+            vk::Extent2D extent = vklearn::chooseSwapExtent(swapChainSupport.capabilities,window);
             uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
             if (swapChainSupport.capabilities.maxImageCount > 0 &&
                 imageCount > swapChainSupport.capabilities.maxImageCount) {
@@ -351,6 +360,10 @@ namespace vklearn {
                 extent,
                 1, // the amount of layers is always 1 unless you are developing a stereoscopic 3D application
                 vk::ImageUsageFlagBits::eColorAttachment);
+
+            if (oldSwapchain != nullptr) {
+                createInfo.oldSwapchain = *oldSwapchain;
+            }
             
             vklearn::QueueFamilyIndices indices = vklearn::findQueueFamilies(physicalDevice, surface);
             uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
