@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Vertex_buffers/Vertex_input_description
+Next => https://vulkan-tutorial.com/Vertex_buffers/Staging_buffer
 
 # Requirements
 

@@ -7,6 +7,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/glm.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -19,10 +20,41 @@
 #define WIDTH 1200
 #define HEIGHT 600
 
-const std::string VERTEX_SHADER_PATH = "spir-v/static_color_triangle.vert.spv";
+const std::string VERTEX_SHADER_PATH = "spir-v/pos_col.vert.spv";
 const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_color.frag.spv";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
+
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    static vk::VertexInputBindingDescription getBindingDescription() {
+        vk::VertexInputBindingDescription bindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex);
+
+        return bindingDescription;
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions{};
+
+        // float: eR32Sfloat
+        // vec2: R32G32Sfloat
+        // vec3: R32G32B32Sfloat
+        // vec4: R32G32B32A32Sfloat
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
 
 class VulkanApp {
 public:
@@ -57,6 +89,14 @@ private:
     GLFWwindow* window;
     size_t currentFrame = 0;
     bool framebufferResized = false;
+
+    const std::vector<Vertex> vertices = {
+        {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    };
+    vk::Buffer vertexBuffer;
+    vk::DeviceMemory vertexBufferMemory;
 
     void initWindow() {
         glfwInit();
@@ -106,6 +146,8 @@ private:
         createFramebuffers();
 
         createCommandPool();
+
+        createVertexBuffer();
 
         createCommandBuffers();
 
@@ -307,12 +349,14 @@ private:
             "main");
         
         vk::PipelineShaderStageCreateInfo shaderStages[2] = {vertShaderStageInfo, fragShaderStageInfo};
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo(
             {},
-            0,
-            nullptr,
-            0,
-            nullptr
+            1,
+            &bindingDescription,
+            static_cast<uint32_t>(attributeDescriptions.size()),
+            attributeDescriptions.data()
         );
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly(
             {},
@@ -474,6 +518,40 @@ private:
         }
     }
 
+    void createVertexBuffer() {
+        vk::BufferCreateInfo bufferInfo(
+            {},
+            sizeof(vertices[0]) * vertices.size(),
+            vk::BufferUsageFlagBits::eVertexBuffer,
+            vk::SharingMode::eExclusive);
+
+        if (device.createBuffer(&bufferInfo, nullptr, &vertexBuffer) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create vertex buffer!");
+        }
+
+        vk::MemoryRequirements memRequirements = device.getBufferMemoryRequirements(vertexBuffer);
+        vk::MemoryAllocateInfo allocInfo(
+            memRequirements.size,
+            vklearn::findMemoryType(
+                physicalDevice,
+                memRequirements.memoryTypeBits,
+                static_cast<vk::MemoryPropertyFlagBits>(
+                    static_cast<uint32_t>(vk::MemoryPropertyFlagBits::eHostVisible) | static_cast<uint32_t>(vk::MemoryPropertyFlagBits::eHostCoherent)
+                )
+                ));
+
+        if (device.allocateMemory(&allocInfo, nullptr, &vertexBufferMemory) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to allocate vertex buffer memory!");
+        }
+
+        device.bindBufferMemory(vertexBuffer, vertexBufferMemory, 0);
+
+        void* data;
+        device.mapMemory(vertexBufferMemory, 0, bufferInfo.size, {}, &data);
+        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+        device.unmapMemory(vertexBufferMemory);
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(swapChainFramebuffers.size());
         vk::CommandBufferAllocateInfo allocInfo(
@@ -501,8 +579,12 @@ private:
             );
             commandBuffers[idx].beginRenderPass(&renderPassInfo, vk::SubpassContents::eInline);
             commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
-            commandBuffers[idx].draw(3, 1, 0, 0);
-            commandBuffers[idx].endRenderPass();
+            // commandBuffers[idx].draw(3, 1, 0, 0);
+            // commandBuffers[idx].endRenderPass();
+            vk::Buffer vertexBuffers[] = {vertexBuffer};
+            vk::DeviceSize offsets[] = {0};
+            commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
+            commandBuffers[idx].draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
             commandBuffers[idx].end();
         }
     }
@@ -641,6 +723,9 @@ private:
     
     void cleanup() {
         cleanupSwapChain();
+
+        device.destroyBuffer(vertexBuffer);
+        device.freeMemory(vertexBufferMemory);
 
         for (size_t idx = 0; idx < MAX_FRAMES_IN_FLIGHT; idx++) {
             device.destroySemaphore(renderFinishedSemaphores[idx]);
