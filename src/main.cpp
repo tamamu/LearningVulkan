@@ -519,37 +519,47 @@ private:
     }
 
     void createVertexBuffer() {
-        vk::BufferCreateInfo bufferInfo(
-            {},
-            sizeof(vertices[0]) * vertices.size(),
-            vk::BufferUsageFlagBits::eVertexBuffer,
-            vk::SharingMode::eExclusive);
-
-        if (device.createBuffer(&bufferInfo, nullptr, &vertexBuffer) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to create vertex buffer!");
-        }
-
-        vk::MemoryRequirements memRequirements = device.getBufferMemoryRequirements(vertexBuffer);
-        vk::MemoryAllocateInfo allocInfo(
-            memRequirements.size,
-            vklearn::findMemoryType(
-                physicalDevice,
-                memRequirements.memoryTypeBits,
-                static_cast<vk::MemoryPropertyFlagBits>(
-                    static_cast<uint32_t>(vk::MemoryPropertyFlagBits::eHostVisible) | static_cast<uint32_t>(vk::MemoryPropertyFlagBits::eHostCoherent)
-                )
-                ));
-
-        if (device.allocateMemory(&allocInfo, nullptr, &vertexBufferMemory) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to allocate vertex buffer memory!");
-        }
-
-        device.bindBufferMemory(vertexBuffer, vertexBufferMemory, 0);
+        vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+        vk::Buffer stagingBuffer;
+        vk::DeviceMemory stagingBufferMemory;
+        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(physicalDevice, device, bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
         void* data;
-        device.mapMemory(vertexBufferMemory, 0, bufferInfo.size, {}, &data);
-        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
-        device.unmapMemory(vertexBufferMemory);
+        device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
+        memcpy(data, vertices.data(), (size_t) bufferSize);
+        device.unmapMemory(stagingBufferMemory);
+
+        std::tie(vertexBuffer, vertexBufferMemory) = vklearn::createBuffer(physicalDevice, device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        device.destroyBuffer(stagingBuffer);
+        device.freeMemory(stagingBufferMemory);
+    }
+
+    void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
+        vk::CommandBufferAllocateInfo allocInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1);
+
+        vk::CommandBuffer commandBuffer;
+        device.allocateCommandBuffers(&allocInfo, &commandBuffer);
+
+        vk::CommandBufferBeginInfo beginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        commandBuffer.begin(&beginInfo);
+
+        vk::BufferCopy copyRegion(0, 0, size);
+        commandBuffer.copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
+
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo;
+        submitInfo
+            .setCommandBufferCount(1)
+            .setCommandBuffers(commandBuffer);
+
+        graphicsQueue.submit({submitInfo}, nullptr);
+        graphicsQueue.waitIdle();
+
+        device.freeCommandBuffers(commandPool, {commandBuffer});
     }
 
     void createCommandBuffers() {

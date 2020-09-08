@@ -9,6 +9,7 @@
 #include <set>
 #include <optional>
 #include <algorithm>
+#include <tuple>
 #include <vulkan/vulkan.hpp>
 
 /// NOTE: PFN/pfn denotes that a type is a function pointer, or that a variable is of a pointer type.
@@ -309,7 +310,7 @@ namespace vklearn {
         return shaderModule;
     }
 
-    uint32_t findMemoryType(vk::PhysicalDevice physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlagBits properties) {
+    uint32_t findMemoryType(vk::PhysicalDevice physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
         vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
 
         for (uint32_t i=0; i < memProperties.memoryTypeCount; ++i) {
@@ -319,6 +320,33 @@ namespace vklearn {
         }
 
         throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    std::tuple<vk::Buffer, vk::DeviceMemory> createBuffer(vk::PhysicalDevice physicalDevice, vk::Device device, vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties) {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo
+            .setSize(size)
+            .setUsage(usage)
+            .setSharingMode(vk::SharingMode::eExclusive);
+        vk::Buffer buffer;
+        vk::DeviceMemory bufferMemory;
+
+        if (device.createBuffer(&bufferInfo, nullptr, &buffer) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create buffer");
+        }
+
+        vk::MemoryRequirements memRequirements;
+        device.getBufferMemoryRequirements(buffer, &memRequirements);
+
+        vk::MemoryAllocateInfo allocInfo(memRequirements.size, findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties));
+
+        if (device.allocateMemory(&allocInfo, nullptr, &bufferMemory) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to allocate buffer memory!");
+        }
+
+        device.bindBufferMemory(buffer, bufferMemory, 0);
+
+        return {buffer, bufferMemory};
     }
 
     namespace boilerplate
