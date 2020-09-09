@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Vertex_buffers/Index_buffer
+Next => https://vulkan-tutorial.com/Uniform_buffers/Descriptor_layout_and_buffer
 
 # Requirements
 

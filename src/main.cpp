@@ -91,12 +91,18 @@ private:
     bool framebufferResized = false;
 
     const std::vector<Vertex> vertices = {
-        {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    };
+    const std::vector<uint16_t> indices = {
+        0, 1, 2, 2, 3, 0
     };
     vk::Buffer vertexBuffer;
     vk::DeviceMemory vertexBufferMemory;
+    vk::Buffer indexBuffer;
+    vk::DeviceMemory indexBufferMemory;
 
     void initWindow() {
         glfwInit();
@@ -148,6 +154,8 @@ private:
         createCommandPool();
 
         createVertexBuffer();
+
+        createIndexBuffer();
 
         createCommandBuffers();
 
@@ -522,16 +530,51 @@ private:
         vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
         vk::Buffer stagingBuffer;
         vk::DeviceMemory stagingBufferMemory;
-        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(physicalDevice, device, bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(
+            physicalDevice, device, bufferSize,
+            vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+            );
 
         void* data;
         device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
         memcpy(data, vertices.data(), (size_t) bufferSize);
         device.unmapMemory(stagingBufferMemory);
 
-        std::tie(vertexBuffer, vertexBufferMemory) = vklearn::createBuffer(physicalDevice, device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        std::tie(vertexBuffer, vertexBufferMemory) = vklearn::createBuffer(
+            physicalDevice, device, bufferSize,
+            vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal
+            );
 
         copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        device.destroyBuffer(stagingBuffer);
+        device.freeMemory(stagingBufferMemory);
+    }
+
+    void createIndexBuffer() {
+        vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+        vk::Buffer stagingBuffer;
+        vk::DeviceMemory stagingBufferMemory;
+        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(
+            physicalDevice, device, bufferSize,
+            vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+            );
+        
+        void* data;
+        device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
+        memcpy(data, indices.data(), (size_t) bufferSize);
+        device.unmapMemory(stagingBufferMemory);
+
+        std::tie(indexBuffer, indexBufferMemory) = vklearn::createBuffer(
+            physicalDevice, device, bufferSize,
+            vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal
+        );
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 
         device.destroyBuffer(stagingBuffer);
         device.freeMemory(stagingBufferMemory);
@@ -594,7 +637,8 @@ private:
             vk::Buffer vertexBuffers[] = {vertexBuffer};
             vk::DeviceSize offsets[] = {0};
             commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
-            commandBuffers[idx].draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            commandBuffers[idx].bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint16);
+            commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             commandBuffers[idx].end();
         }
     }
@@ -734,8 +778,11 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
+        device.destroyBuffer(indexBuffer);
+        device.freeMemory(indexBufferMemory);
         device.destroyBuffer(vertexBuffer);
         device.freeMemory(vertexBufferMemory);
+
 
         for (size_t idx = 0; idx < MAX_FRAMES_IN_FLIGHT; idx++) {
             device.destroySemaphore(renderFinishedSemaphores[idx]);
