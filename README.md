@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Uniform_buffers/Descriptor_layout_and_buffer
+Next => https://vulkan-tutorial.com/Texture_mapping/Images
 
 # Requirements
 
