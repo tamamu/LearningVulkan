@@ -8,6 +8,7 @@
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -20,7 +21,7 @@
 #define WIDTH 1200
 #define HEIGHT 600
 
-const std::string VERTEX_SHADER_PATH = "spir-v/pos_col.vert.spv";
+const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos_col.vert.spv";
 const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_color.frag.spv";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -56,6 +57,12 @@ struct Vertex {
     }
 };
 
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
 class VulkanApp {
 public:
     void run() {
@@ -76,6 +83,7 @@ private:
     std::vector<vk::Image> swapChainImages;
     std::vector<vk::ImageView> swapChainImageViews;
     vk::RenderPass renderPass;
+    vk::DescriptorSetLayout descriptorSetLayout;
     vk::PipelineLayout pipelineLayout;
     vk::Pipeline graphicsPipeline;
     std::vector<vk::Framebuffer> swapChainFramebuffers;
@@ -103,6 +111,8 @@ private:
     vk::DeviceMemory vertexBufferMemory;
     vk::Buffer indexBuffer;
     vk::DeviceMemory indexBufferMemory;
+    std::vector<vk::Buffer> uniformBuffers;
+    std::vector<vk::DeviceMemory> uniformBuffersMemory;
 
     void initWindow() {
         glfwInit();
@@ -147,6 +157,8 @@ private:
 
         createRenderPass();
 
+        createDescriptorSetLayout();
+
         createGraphicsPipeline();
 
         createFramebuffers();
@@ -156,6 +168,8 @@ private:
         createVertexBuffer();
 
         createIndexBuffer();
+
+        createUniformBuffers();
 
         createCommandBuffers();
 
@@ -341,6 +355,25 @@ private:
         }
     }
 
+    void createDescriptorSetLayout() {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding(
+            0, // binding
+            vk::DescriptorType::eUniformBuffer,
+            1, // number of values in the array (1 ubo, in here)
+            vk::ShaderStageFlagBits::eVertex, // only referencing from vertex shader
+            nullptr // only relevant for image sampling
+            );
+        vk::DescriptorSetLayoutCreateInfo layoutInfo(
+            {},
+            1,
+            &uboLayoutBinding
+        );
+
+        if (device.createDescriptorSetLayout(&layoutInfo, nullptr, &descriptorSetLayout) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
     void createGraphicsPipeline() {
         vk::ShaderModule vertShaderModule = vklearn::createShaderModuleFromFile(device, VERTEX_SHADER_PATH);
         vk::ShaderModule fragShaderModule = vklearn::createShaderModuleFromFile(device, FRAGMENT_SHADER_PATH);
@@ -456,8 +489,8 @@ private:
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
             {},
-            0,
-            nullptr,
+            1, // descriptorSetLayoutCount
+            &descriptorSetLayout, // descriptorSetLayouts
             0,
             nullptr
         );
@@ -580,6 +613,22 @@ private:
         device.freeMemory(stagingBufferMemory);
     }
 
+    void createUniformBuffers() {
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        uniformBuffers.resize(swapChainImages.size());
+        uniformBuffersMemory.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); ++i) {
+            std::tie(uniformBuffers[i], uniformBuffersMemory[i]) =
+                vklearn::createBuffer(
+                    physicalDevice, device, bufferSize,
+                    vk::BufferUsageFlagBits::eUniformBuffer,
+                    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+                );
+        }
+    }
+
     void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
         vk::CommandBufferAllocateInfo allocInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1);
 
@@ -666,6 +715,11 @@ private:
             device.destroyFramebuffer(swapChainFramebuffers[idx]);
         }
 
+        for (size_t idx = 0; idx < swapChainFramebuffers.size(); idx++) {
+            device.destroyBuffer(uniformBuffers[idx]);
+            device.freeMemory(uniformBuffersMemory[idx]);
+        }
+
         device.freeCommandBuffers(commandPool, commandBuffers);
         device.destroyPipeline(graphicsPipeline);
         device.destroyPipelineLayout(pipelineLayout);
@@ -695,6 +749,7 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createUniformBuffers();
         createCommandBuffers();
     }
 
@@ -743,6 +798,7 @@ private:
         vk::Semaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
         vk::Semaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
         vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+        updateUniformBuffer(imageIndex);
         vk::SubmitInfo submitInfo(
             1,
             waitSemaphores,
@@ -774,10 +830,42 @@ private:
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
+
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(
+            glm::mat4(1.0f),
+            time * glm::radians(90.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+        ubo.view = glm::lookAt(
+            glm::vec3(2.0f, 2.0f, 2.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+        ubo.proj = glm::perspective(
+            glm::radians(45.0f),
+            swapChainDetails.extent.width / (float) swapChainDetails.extent.height,
+            0.1f,
+            10.0f
+        );
+        ubo.proj[1][1] *= -1; // Y coordinate upside down
+
+        void* data;
+        device.mapMemory(uniformBuffersMemory[currentImage], 0, sizeof(ubo), {}, &data);
+        memcpy(data, &ubo, sizeof(ubo));
+        device.unmapMemory(uniformBuffersMemory[currentImage]);
+    }
     
     void cleanup() {
         cleanupSwapChain();
 
+        device.destroyDescriptorSetLayout(descriptorSetLayout);
         device.destroyBuffer(indexBuffer);
         device.freeMemory(indexBufferMemory);
         device.destroyBuffer(vertexBuffer);
