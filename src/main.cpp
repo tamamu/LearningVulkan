@@ -87,6 +87,8 @@ private:
     vk::PipelineLayout pipelineLayout;
     vk::Pipeline graphicsPipeline;
     std::vector<vk::Framebuffer> swapChainFramebuffers;
+    vk::DescriptorPool descriptorPool;
+    std::vector<vk::DescriptorSet> descriptorSets;
     vk::CommandPool commandPool;
     std::vector<vk::CommandBuffer> commandBuffers;
     std::vector<vk::Semaphore> imageAvailableSemaphores;
@@ -170,6 +172,10 @@ private:
         createIndexBuffer();
 
         createUniformBuffers();
+
+        createDescriptorPool();
+
+        createDescriptorSets();
 
         createCommandBuffers();
 
@@ -423,7 +429,7 @@ private:
             false,
             vk::PolygonMode::eFill,
             vk::CullModeFlagBits::eBack,
-            vk::FrontFace::eClockwise,
+            vk::FrontFace::eCounterClockwise,
             false,
             0.0,
             0.0,
@@ -629,6 +635,56 @@ private:
         }
     }
 
+    void createDescriptorPool() {
+        vk::DescriptorPoolSize poolSize(
+            {},
+            static_cast<uint32_t>(swapChainImages.size())
+        );
+        vk::DescriptorPoolCreateInfo poolInfo(
+            {},
+            static_cast<uint32_t>(swapChainImages.size()), // max num of descriptor sets
+            1,
+            &poolSize
+        );
+        
+        if (device.createDescriptorPool(&poolInfo, nullptr, &descriptorPool) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create descriptor pool!");
+        }
+    }
+
+    void createDescriptorSets() {
+        std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+        vk::DescriptorSetAllocateInfo allocInfo(
+            descriptorPool,
+            static_cast<uint32_t>(swapChainImages.size()),
+            layouts.data()
+        );
+        descriptorSets.resize(swapChainImages.size());
+
+        if (device.allocateDescriptorSets(&allocInfo, descriptorSets.data()) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to allocate descriptor sets!");
+        }
+
+        for (size_t idx = 0; idx < swapChainImages.size(); ++idx) {
+            vk::DescriptorBufferInfo bufferInfo(
+                uniformBuffers[idx],
+                0,
+                sizeof(UniformBufferObject)
+            );
+            vk::WriteDescriptorSet descriptorWrite(
+                descriptorSets[idx],
+                0, // binding
+                0, // arrayElement
+                1, // descriptor count
+                vk::DescriptorType::eUniformBuffer,
+                nullptr, // imageInfo
+                &bufferInfo,
+                nullptr // texelBufferView
+            );
+            device.updateDescriptorSets(1, &descriptorWrite, 0, nullptr);
+        }
+    }
+
     void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
         vk::CommandBufferAllocateInfo allocInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1);
 
@@ -687,6 +743,7 @@ private:
             vk::DeviceSize offsets[] = {0};
             commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
             commandBuffers[idx].bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint16);
+            commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
             commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             commandBuffers[idx].end();
         }
@@ -720,6 +777,7 @@ private:
             device.freeMemory(uniformBuffersMemory[idx]);
         }
 
+        device.destroyDescriptorPool(descriptorPool);
         device.freeCommandBuffers(commandPool, commandBuffers);
         device.destroyPipeline(graphicsPipeline);
         device.destroyPipelineLayout(pipelineLayout);
@@ -750,6 +808,8 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
     }
 
