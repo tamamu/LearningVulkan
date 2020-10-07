@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Texture_mapping/Images
+Next => https://vulkan-tutorial.com/Texture_mapping/Image_view_and_sampler
 
 # Requirements
 

@@ -10,6 +10,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -113,6 +116,8 @@ private:
     vk::DeviceMemory vertexBufferMemory;
     vk::Buffer indexBuffer;
     vk::DeviceMemory indexBufferMemory;
+    vk::Image textureImage;
+    vk::DeviceMemory textureImageMemory;
     std::vector<vk::Buffer> uniformBuffers;
     std::vector<vk::DeviceMemory> uniformBuffersMemory;
 
@@ -166,6 +171,8 @@ private:
         createFramebuffers();
 
         createCommandPool();
+
+        createTextureImage();
 
         createVertexBuffer();
 
@@ -565,6 +572,104 @@ private:
         }
     }
 
+    void createTextureImage() {
+        int texWidth, texHeight, texChannels;
+        stbi_uc* pixels = stbi_load("assets/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+        if (!pixels) {
+            throw std::runtime_error("failed to load texture image!");
+        }
+
+        vk::Buffer stagingBuffer;
+        vk::DeviceMemory stagingBufferMemory;
+        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(
+            physicalDevice, device,
+            imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+        );
+
+        void* data;
+        device.mapMemory(stagingBufferMemory, 0, imageSize, {}, &data);
+        device.unmapMemory(stagingBufferMemory);
+
+        stbi_image_free(pixels);
+
+        createImage(
+            texWidth, texHeight,
+            vk::Format::eR8G8B8A8Srgb,
+            vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            textureImage,
+            textureImageMemory
+            );
+        
+        vklearn::transitionImageLayout(
+            device, commandPool, graphicsQueue,
+            textureImage,
+            vk::Format::eR8G8B8A8Srgb,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eTransferDstOptimal);
+        vklearn::copyBufferToImage(
+            device, commandPool, graphicsQueue,
+            stagingBuffer,
+            textureImage,
+            static_cast<uint32_t>(texWidth),
+            static_cast<uint32_t>(texHeight)
+        );
+        vklearn::transitionImageLayout(
+            device, commandPool, graphicsQueue,
+            textureImage,
+            vk::Format::eR8G8B8A8Srgb,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::ImageLayout::eShaderReadOnlyOptimal
+        );
+
+        device.destroyBuffer(stagingBuffer);
+        device.freeMemory(stagingBufferMemory);
+    }
+
+    void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::Image& image, vk::DeviceMemory& imageMemory) {
+        vk::ImageCreateInfo imageInfo(
+            {},
+            // e1D - gradient, e2D - 2D image, e3D - voxel volumes
+            vk::ImageType::e2D,
+            format,
+            vk::Extent3D(
+                width,
+                height,
+                1   // depth
+            ),
+            1,  // mipLevels
+            1,  // arrayLayers
+            vk::SampleCountFlagBits::e1,
+            tiling, // vk::ImageTiling::eLinear
+            usage,
+            vk::SharingMode::eExclusive
+        );
+
+        // ePreinitialized - first transition will preserve the texels
+        imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+
+        if (device.createImage(&imageInfo, nullptr, &image) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create image!");
+        }
+
+        vk::MemoryRequirements memRequirements;
+        device.getImageMemoryRequirements(image, &memRequirements);
+
+        vk::MemoryAllocateInfo allocInfo(
+            memRequirements.size,
+            vklearn::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties)
+        );
+
+        if (device.allocateMemory(&allocInfo, nullptr, &imageMemory) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to allocate image memory!");
+        }
+
+        device.bindImageMemory(image, imageMemory, 0);
+    }
+
     void createVertexBuffer() {
         vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
         vk::Buffer stagingBuffer;
@@ -688,26 +793,12 @@ private:
     void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
         vk::CommandBufferAllocateInfo allocInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1);
 
-        vk::CommandBuffer commandBuffer;
-        device.allocateCommandBuffers(&allocInfo, &commandBuffer);
-
-        vk::CommandBufferBeginInfo beginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
-        commandBuffer.begin(&beginInfo);
+        vk::CommandBuffer commandBuffer = vklearn::beginSingleTimeCommands(device, commandPool);
 
         vk::BufferCopy copyRegion(0, 0, size);
         commandBuffer.copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
 
-        commandBuffer.end();
-
-        vk::SubmitInfo submitInfo;
-        submitInfo
-            .setCommandBufferCount(1)
-            .setCommandBuffers(commandBuffer);
-
-        graphicsQueue.submit({submitInfo}, nullptr);
-        graphicsQueue.waitIdle();
-
-        device.freeCommandBuffers(commandPool, {commandBuffer});
+        vklearn::endSingleTimeCommands(device, commandPool, commandBuffer, graphicsQueue);
     }
 
     void createCommandBuffers() {
@@ -925,12 +1016,13 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
+        device.destroyImage(textureImage);
+        device.freeMemory(textureImageMemory);
         device.destroyDescriptorSetLayout(descriptorSetLayout);
         device.destroyBuffer(indexBuffer);
         device.freeMemory(indexBufferMemory);
         device.destroyBuffer(vertexBuffer);
         device.freeMemory(vertexBufferMemory);
-
 
         for (size_t idx = 0; idx < MAX_FRAMES_IN_FLIGHT; idx++) {
             device.destroySemaphore(renderFinishedSemaphores[idx]);

@@ -322,6 +322,118 @@ namespace vklearn {
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
+    vk::CommandBuffer beginSingleTimeCommands(vk::Device device, vk::CommandPool commandPool) {
+        vk::CommandBufferAllocateInfo allocInfo(
+            commandPool,
+            vk::CommandBufferLevel::ePrimary,
+            1
+        );
+
+        vk::CommandBuffer commandBuffer;
+        device.allocateCommandBuffers(&allocInfo, &commandBuffer);
+
+        vk::CommandBufferBeginInfo beginInfo(
+            vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+        );
+
+        commandBuffer.begin(&beginInfo);
+
+        return commandBuffer;
+    }
+
+    void endSingleTimeCommands(vk::Device device, vk::CommandPool commandPool, vk::CommandBuffer commandBuffer, vk::Queue queue) {
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        queue.submit(1, &submitInfo, nullptr);
+        queue.waitIdle();
+
+        device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+    }
+
+    void transitionImageLayout(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Image image, vk::Format format, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+        vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
+
+        vk::ImageMemoryBarrier barrier{};
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = 0;
+        barrier.dstQueueFamilyIndex = 0;
+        barrier.image = image;
+        barrier.subresourceRange = vk::ImageSubresourceRange(
+            vk::ImageAspectFlagBits::eColor,
+            0,  // baseMipLevel
+            1,  // levelCount
+            0,  // baseArrayLayer
+            1   // layerCount
+        );
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = {};
+
+        vk::PipelineStageFlags sourceStage, destinationStage;
+
+        if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+            destinationStage = vk::PipelineStageFlagBits::eTransfer;
+        } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+            sourceStage = vk::PipelineStageFlagBits::eTransfer;
+            destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+        } else {
+            throw std::invalid_argument("unsupported layout transition!");
+        }
+
+        commandBuffer.pipelineBarrier(
+            sourceStage, destinationStage,
+            {},
+            0, nullptr,
+            0, nullptr,
+            1, &barrier
+        );
+
+        endSingleTimeCommands(device, commandPool, commandBuffer, graphicsQueue);
+    }
+
+    void copyBufferToImage(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height) {
+        vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
+
+        vk::BufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+
+        region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+
+        region.imageOffset.x = 0;
+        region.imageOffset.y = 0;
+        region.imageOffset.z = 0;
+
+        region.imageExtent.width = width;
+        region.imageExtent.height = height;
+        region.imageExtent.depth = 1;
+
+        commandBuffer.copyBufferToImage(
+            buffer,
+            image,
+            vk::ImageLayout::eTransferDstOptimal,
+            1,
+            &region
+        );
+
+        endSingleTimeCommands(device, commandPool, commandBuffer, graphicsQueue);
+    }
+
     std::tuple<vk::Buffer, vk::DeviceMemory> createBuffer(vk::PhysicalDevice physicalDevice, vk::Device device, vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties) {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo
