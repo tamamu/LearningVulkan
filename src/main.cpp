@@ -13,6 +13,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "mmd.hpp"
+
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -24,13 +26,13 @@
 #define WIDTH 1200
 #define HEIGHT 600
 
-const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos_col.vert.spv";
+const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos3_col.vert.spv";
 const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_color.frag.spv";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 struct Vertex {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 color;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
@@ -48,7 +50,7 @@ struct Vertex {
         // vec4: R32G32B32A32Sfloat
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+        attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
         attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
         attributeDescriptions[1].binding = 0;
@@ -103,15 +105,8 @@ private:
     size_t currentFrame = 0;
     bool framebufferResized = false;
 
-    const std::vector<Vertex> vertices = {
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
-    };
-    const std::vector<uint16_t> indices = {
-        0, 1, 2, 2, 3, 0
-    };
+    std::vector<Vertex> vertices;
+    std::vector<uint16_t> indices;
     vk::Buffer vertexBuffer;
     vk::DeviceMemory vertexBufferMemory;
     vk::Buffer indexBuffer;
@@ -173,6 +168,8 @@ private:
         createCommandPool();
 
         createTextureImage();
+
+        loadModel();
 
         createVertexBuffer();
 
@@ -670,6 +667,37 @@ private:
         device.bindImageMemory(image, imageMemory, 0);
     }
 
+    void loadModel() {
+        std::vector<PMXLoader::Vertex> _vertices;
+        std::vector<int> _planes;
+        std::tie(_vertices, _planes) = PMXLoader::read_pmx("ying/ying.pmx");
+
+        vertices = std::vector<Vertex>(_vertices.size());
+        for (int j=0; j < _vertices.size(); ++j) {
+            auto _pos = _vertices[j].position;
+            auto _norm = _vertices[j].normal;
+            vertices[j] = {
+                glm::vec3(_pos.x, _pos.y, _pos.z),
+                glm::vec3(_norm.x, _norm.y, _norm.z)
+            };
+        }
+
+        indices = std::vector<uint16_t>(_planes.size());
+        for (int j=0; j < _planes.size(); ++j) {
+            indices[j] = static_cast<uint16_t>(_planes[j]);
+        }
+
+        // vertices = {
+        //     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        //     {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        //     {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        //     {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+        // };
+        // indices = {
+        //     0, 1, 2, 2, 3, 0
+        // };
+    }
+
     void createVertexBuffer() {
         vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
         vk::Buffer stagingBuffer;
@@ -992,18 +1020,18 @@ private:
         ubo.model = glm::rotate(
             glm::mat4(1.0f),
             time * glm::radians(90.0f),
-            glm::vec3(0.0f, 0.0f, 1.0f)
+            glm::vec3(0.0f, 1.0f, 0.0f)
         );
         ubo.view = glm::lookAt(
-            glm::vec3(2.0f, 2.0f, 2.0f),
-            glm::vec3(0.0f, 0.0f, 0.0f),
-            glm::vec3(0.0f, 0.0f, 1.0f)
+            glm::vec3(0.0f, 18.0f, 20.0f),
+            glm::vec3(0.0f, 10.0f, 0.0f),
+            glm::vec3(0.0f, 0.0f, -1.0f)
         );
         ubo.proj = glm::perspective(
             glm::radians(45.0f),
             swapChainDetails.extent.width / (float) swapChainDetails.extent.height,
             0.1f,
-            10.0f
+            40.0f
         );
         ubo.proj[1][1] *= -1; // Y coordinate upside down
 
