@@ -116,6 +116,10 @@ private:
     std::vector<vk::Buffer> uniformBuffers;
     std::vector<vk::DeviceMemory> uniformBuffersMemory;
 
+    vk::Image depthImage;
+    vk::DeviceMemory depthImageMemory;
+    vk::ImageView depthImageView;
+
     void initWindow() {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -163,9 +167,12 @@ private:
 
         createGraphicsPipeline();
 
-        createFramebuffers();
 
         createCommandPool();
+
+        createDepthResources();
+
+        createFramebuffers();
 
         createTextureImage();
 
@@ -282,28 +289,9 @@ private:
     }
 
     void createImageViews() {
-        swapChainImageViews = std::vector<vk::ImageView>(swapChainImages.size());
+        swapChainImageViews.resize(swapChainImages.size());
         for (size_t idx = 0; idx < swapChainImages.size(); ++idx) {
-            vk::ImageViewCreateInfo createInfo(
-                {},
-                swapChainImages[idx],
-                vk::ImageViewType::e2D,
-                swapChainDetails.format.format,
-                vk::ComponentMapping(
-                    vk::ComponentSwizzle::eIdentity,
-                    vk::ComponentSwizzle::eIdentity,
-                    vk::ComponentSwizzle::eIdentity,
-                    vk::ComponentSwizzle::eIdentity),
-                vk::ImageSubresourceRange(
-                    vk::ImageAspectFlagBits::eColor,
-                    0,
-                    1,
-                    0,
-                    1)
-                );
-            if (device.createImageView(&createInfo, nullptr, &swapChainImageViews[idx]) != vk::Result::eSuccess) {
-                throw std::runtime_error("failed to create image views!");
-            }
+            swapChainImageViews[idx] = vklearn::boilerplate::createImageView(device, swapChainImages[idx], swapChainDetails.format.format, vk::ImageAspectFlagBits::eColor);
         }
     }
 
@@ -335,6 +323,23 @@ private:
         vk::AttachmentReference colorAttachmentRef(
             0, // index of attachment description
             vk::ImageLayout::eColorAttachmentOptimal);
+
+        vk::AttachmentDescription depthAttachment(
+            {},
+            findDepthFormat(),
+            vk::SampleCountFlagBits::e1,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eDontCare,
+            vk::AttachmentLoadOp::eDontCare,
+            vk::AttachmentStoreOp::eDontCare,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal
+        );
+        vk::AttachmentReference depthAttachmentRef(
+            1,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal
+        );
+
         vk::SubpassDescription subpass(
             {},
             vk::PipelineBindPoint::eGraphics,
@@ -343,6 +348,7 @@ private:
             1,
             &colorAttachmentRef
         );
+        subpass.pDepthStencilAttachment = &depthAttachmentRef;
         vk::SubpassDependency dependency(
             VK_SUBPASS_EXTERNAL,
             0,
@@ -351,10 +357,13 @@ private:
             {},
             vk::AccessFlagBits::eColorAttachmentWrite
         );
+
+        std::array<vk::AttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
+
         vk::RenderPassCreateInfo renderPassInfo(
             {},
-            1,
-            &colorAttachment,
+            static_cast<uint32_t>(attachments.size()),
+            attachments.data(),
             1,
             &subpass,
             1,
@@ -486,6 +495,15 @@ private:
             {0.0, 0.0, 0.0, 0.0}
         );
 
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = true;
+        depthStencil.depthWriteEnable = true;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        depthStencil.depthBoundsTestEnable = false;
+        depthStencil.minDepthBounds = 0.0f;
+        depthStencil.maxDepthBounds = 1.0f;
+        depthStencil.stencilTestEnable = false;
+
         vk::DynamicState dynamicStates[2] = {
             vk::DynamicState::eViewport,
             vk::DynamicState::eLineWidth
@@ -519,7 +537,7 @@ private:
             &viewportState,
             &rasterizer,
             &multisampling,
-            nullptr,
+            &depthStencil,
             &colorBlending,
             nullptr,
             pipelineLayout,
@@ -541,15 +559,16 @@ private:
         swapChainFramebuffers.resize(swapChainImageViews.size());
 
         for (size_t idx = 0; idx < swapChainImageViews.size(); idx++) {
-            vk::ImageView attachments[] = {
-                swapChainImageViews[idx]
+            std::array<vk::ImageView, 2> attachments = {
+                swapChainImageViews[idx],
+                depthImageView
             };
 
             vk::FramebufferCreateInfo framebufferInfo(
                 {},
                 renderPass,
-                1,
-                attachments,
+                static_cast<uint32_t>(attachments.size()),
+                attachments.data(),
                 swapChainDetails.extent.width,
                 swapChainDetails.extent.height,
                 1);
@@ -567,6 +586,32 @@ private:
         if (device.createCommandPool(&poolInfo, nullptr, &commandPool) != vk::Result::eSuccess) {
             throw std::runtime_error("failed to create command pool!");
         }
+    }
+
+    vk::Format findDepthFormat() {
+        return vklearn::findSupportedFormat(physicalDevice,
+        {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint},
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+    }
+
+    // color attachmentのようにdepth attachmentを作る
+    // これはdraw operationの時に使われるため、1つだけで良い(同時に複数走らない)
+    void createDepthResources() {
+        vk::Format depthFormat = findDepthFormat();
+        createImage(
+            swapChainDetails.extent.width,
+            swapChainDetails.extent.height,
+            depthFormat,
+            vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eDepthStencilAttachment,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            depthImage,
+            depthImageMemory);
+        depthImageView = vklearn::boilerplate::createImageView(device, depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+        vklearn::transitionImageLayout(device, commandPool, graphicsQueue, depthImage, depthFormat,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
     void createTextureImage() {
@@ -846,13 +891,15 @@ private:
             if (commandBuffers[idx].begin(&beginInfo) != vk::Result::eSuccess) {
                 throw std::runtime_error("failed to begin recording command buffer!");
             }
-            vk::ClearValue clearColor(vk::ClearColorValue(std::array<float, 4>({{0.0, 0.0, 0.0,1.0}})));
+            std::array<vk::ClearValue, 2> clearValues{};
+            clearValues[0].color = vk::ClearColorValue(std::array<float, 4>{0.0, 0.0, 0.0, 1.0});
+            clearValues[1].depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
             vk::RenderPassBeginInfo renderPassInfo(
                 renderPass,
                 swapChainFramebuffers[idx],
                 vk::Rect2D({0, 0}, swapChainDetails.extent),
-                1,
-                &clearColor
+                static_cast<uint32_t>(clearValues.size()),
+                clearValues.data()
             );
             commandBuffers[idx].beginRenderPass(&renderPassInfo, vk::SubpassContents::eInline);
             commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
@@ -887,6 +934,10 @@ private:
     }
 
     void cleanupSwapChain() {
+        device.destroyImageView(depthImageView);
+        device.destroyImage(depthImage);
+        device.freeMemory(depthImageMemory);
+
         for (size_t idx = 0; idx < swapChainFramebuffers.size(); idx++) {
             device.destroyFramebuffer(swapChainFramebuffers[idx]);
         }
@@ -925,6 +976,7 @@ private:
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
+        createDepthResources();
         createFramebuffers();
         createUniformBuffers();
         createDescriptorPool();

@@ -354,6 +354,10 @@ namespace vklearn {
         device.freeCommandBuffers(commandPool, 1, &commandBuffer);
     }
 
+    bool hasStencilComponent(vk::Format format) {
+        return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
+    }
+
     void transitionImageLayout(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Image image, vk::Format format, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
         vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
 
@@ -370,6 +374,15 @@ namespace vklearn {
             0,  // baseArrayLayer
             1   // layerCount
         );
+        if (newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+            if (hasStencilComponent(format)) {
+                barrier.subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
+            }
+        } else {
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        }
         barrier.srcAccessMask = {};
         barrier.dstAccessMask = {};
 
@@ -387,6 +400,12 @@ namespace vklearn {
 
             sourceStage = vk::PipelineStageFlagBits::eTransfer;
             destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+        } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+
+            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+            destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
         } else {
             throw std::invalid_argument("unsupported layout transition!");
         }
@@ -459,6 +478,19 @@ namespace vklearn {
         device.bindBufferMemory(buffer, bufferMemory, 0);
 
         return {buffer, bufferMemory};
+    }
+
+    vk::Format findSupportedFormat(vk::PhysicalDevice physicalDevice, const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features) {
+        for (vk::Format format : candidates) {
+            vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+            if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+                return format;
+            } else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("failed to find supported format!");
     }
 
     namespace boilerplate
@@ -549,6 +581,26 @@ namespace vklearn {
             SwapChainDetails details(surfaceFormat, presentMode, extent);
 
             return std::make_tuple(swapChain, details);
+        }
+
+        vk::ImageView createImageView(vk::Device device, vk::Image image, vk::Format format, vk::ImageAspectFlags aspectFlags) {
+            vk::ImageViewCreateInfo viewInfo{};
+            viewInfo.image = image;
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = vk::ImageSubresourceRange(
+                    aspectFlags,
+                    0,
+                    1,
+                    0,
+                    1);
+            
+            vk::ImageView imageView;
+            if (device.createImageView(&viewInfo, nullptr, &imageView) != vk::Result::eSuccess) {
+                throw std::runtime_error("failed to create texture image view!");
+            }
+
+            return imageView;
         }
 
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT(PFN_vkDebugUtilsMessengerCallbackEXT pfnUserCallback) {
