@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Texture_mapping/Image_view_and_sampler
+Next => https://vulkan-tutorial.com/Loading_models#page_Vertex-deduplication
 
 # Requirements
 

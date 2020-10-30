@@ -26,14 +26,15 @@
 #define WIDTH 1200
 #define HEIGHT 600
 
-const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos3_col.vert.spv";
-const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_color.frag.spv";
+const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos3_col_tex.vert.spv";
+const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_tex.frag.spv";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
+    glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription bindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex);
@@ -41,8 +42,8 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
-        std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions{};
+    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions() {
+        std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{};
 
         // float: eR32Sfloat
         // vec2: R32G32Sfloat
@@ -57,6 +58,11 @@ struct Vertex {
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
         attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = vk::Format::eR32G32Sfloat;
+        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 
         return attributeDescriptions;
     }
@@ -113,6 +119,8 @@ private:
     vk::DeviceMemory indexBufferMemory;
     vk::Image textureImage;
     vk::DeviceMemory textureImageMemory;
+    vk::ImageView textureImageView;
+    vk::Sampler textureSampler;
     std::vector<vk::Buffer> uniformBuffers;
     std::vector<vk::DeviceMemory> uniformBuffersMemory;
 
@@ -175,6 +183,10 @@ private:
         createFramebuffers();
 
         createTextureImage();
+
+        createTextureImageView();
+
+        createTextureSampler();
 
         loadModel();
 
@@ -262,6 +274,8 @@ private:
         }
 
         vk::PhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.setSamplerAnisotropy(true);
+
         vk::DeviceCreateInfo createInfo(
             {},
             static_cast<uint32_t>(queueCreateInfos.size()),
@@ -382,10 +396,20 @@ private:
             vk::ShaderStageFlagBits::eVertex, // only referencing from vertex shader
             nullptr // only relevant for image sampling
             );
+        vk::DescriptorSetLayoutBinding samplerLayoutBinding(
+            1,
+            vk::DescriptorType::eCombinedImageSampler,
+            1,
+            vk::ShaderStageFlagBits::eFragment,
+            nullptr
+        );
+
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+
         vk::DescriptorSetLayoutCreateInfo layoutInfo(
             {},
-            1,
-            &uboLayoutBinding
+            static_cast<uint32_t>(bindings.size()),
+            bindings.data()
         );
 
         if (device.createDescriptorSetLayout(&layoutInfo, nullptr, &descriptorSetLayout) != vk::Result::eSuccess) {
@@ -632,6 +656,7 @@ private:
 
         void* data;
         device.mapMemory(stagingBufferMemory, 0, imageSize, {}, &data);
+        memcpy(data, pixels, static_cast<size_t>(imageSize));
         device.unmapMemory(stagingBufferMemory);
 
         stbi_image_free(pixels);
@@ -669,6 +694,34 @@ private:
 
         device.destroyBuffer(stagingBuffer);
         device.freeMemory(stagingBufferMemory);
+    }
+
+    void createTextureImageView() {
+        textureImageView = vklearn::boilerplate::createImageView(device, textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+    }
+
+    void createTextureSampler() {
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo
+            .setMagFilter(vk::Filter::eLinear)
+            .setMinFilter(vk::Filter::eLinear)
+            .setAddressModeU(vk::SamplerAddressMode::eRepeat)
+            .setAddressModeV(vk::SamplerAddressMode::eRepeat)
+            .setAddressModeW(vk::SamplerAddressMode::eRepeat)
+            .setAnisotropyEnable(true)
+            .setMaxAnisotropy(16.0f)
+            .setBorderColor(vk::BorderColor::eIntOpaqueBlack)
+            .setUnnormalizedCoordinates(false)
+            .setCompareEnable(false)
+            .setCompareOp(vk::CompareOp::eAlways)
+            .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+            .setMipLodBias(0.0f)
+            .setMinLod(0.0f)
+            .setMaxLod(0.0f);
+
+        if (device.createSampler(&samplerInfo, nullptr, &textureSampler) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create texture sampler!");
+        }
     }
 
     void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::Image& image, vk::DeviceMemory& imageMemory) {
@@ -721,9 +774,21 @@ private:
         for (int j=0; j < _vertices.size(); ++j) {
             auto _pos = _vertices[j].position;
             auto _norm = _vertices[j].normal;
+            glm::vec2 texCoord(0.0f, 0.0f);
+            switch (j%3) {
+                case 0:
+                    texCoord = glm::vec2{1.0f, 1.0f};
+                    break;
+                case 1:
+                    texCoord = glm::vec2{1.0f, 0.0f};
+                    break;
+                case 2:
+                    break;
+            }
             vertices[j] = {
                 glm::vec3(_pos.x, _pos.y, _pos.z),
-                glm::vec3(_norm.x, _norm.y, _norm.z)
+                glm::vec3(_norm.x, _norm.y, _norm.z),
+                texCoord
             };
         }
 
@@ -814,15 +879,19 @@ private:
     }
 
     void createDescriptorPool() {
-        vk::DescriptorPoolSize poolSize(
-            {},
-            static_cast<uint32_t>(swapChainImages.size())
-        );
+        std::array<vk::DescriptorPoolSize, 2> poolSizes{};
+        poolSizes[0]
+            .setType(vk::DescriptorType::eUniformBuffer)
+            .setDescriptorCount(static_cast<uint32_t>(swapChainImages.size()));
+        poolSizes[1]
+            .setType(vk::DescriptorType::eCombinedImageSampler)
+            .setDescriptorCount(static_cast<uint32_t>(swapChainImages.size()));
+        
         vk::DescriptorPoolCreateInfo poolInfo(
             {},
             static_cast<uint32_t>(swapChainImages.size()), // max num of descriptor sets
-            1,
-            &poolSize
+            static_cast<uint32_t>(poolSizes.size()),
+            poolSizes.data()
         );
         
         if (device.createDescriptorPool(&poolInfo, nullptr, &descriptorPool) != vk::Result::eSuccess) {
@@ -849,17 +918,29 @@ private:
                 0,
                 sizeof(UniformBufferObject)
             );
-            vk::WriteDescriptorSet descriptorWrite(
-                descriptorSets[idx],
-                0, // binding
-                0, // arrayElement
-                1, // descriptor count
-                vk::DescriptorType::eUniformBuffer,
-                nullptr, // imageInfo
-                &bufferInfo,
-                nullptr // texelBufferView
+            vk::DescriptorImageInfo imageInfo(
+                textureSampler,
+                textureImageView,
+                vk::ImageLayout::eShaderReadOnlyOptimal
             );
-            device.updateDescriptorSets(1, &descriptorWrite, 0, nullptr);
+
+            std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+            descriptorWrites[0]
+                .setDstSet(descriptorSets[idx])
+                .setDstBinding(0)
+                .setDstArrayElement(0)
+                .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+                .setDescriptorCount(1)
+                .setPBufferInfo(&bufferInfo);
+            descriptorWrites[1]
+                .setDstSet(descriptorSets[idx])
+                .setDstBinding(1)
+                .setDstArrayElement(0)
+                .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+                .setDescriptorCount(1)
+                .setPImageInfo(&imageInfo);
+
+            device.updateDescriptorSets(static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
     }
 
@@ -1096,6 +1177,8 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
+        device.destroySampler(textureSampler);
+        device.destroyImageView(textureImageView);
         device.destroyImage(textureImage);
         device.freeMemory(textureImageMemory);
         device.destroyDescriptorSetLayout(descriptorSetLayout);

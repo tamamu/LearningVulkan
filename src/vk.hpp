@@ -213,6 +213,11 @@ namespace vklearn {
             return 0;
         }
 
+        if (!features.samplerAnisotropy) {
+            std::cerr << "Not supported: Sampler Anisotropy" << std::endl;
+            return 0;
+        }
+
         if (!indices.isComplete()) {
             std::cerr << "Not found: Required queue families" << std::endl;
             return 0;
