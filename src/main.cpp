@@ -22,12 +22,15 @@
 #include <set>
 #include <chrono>
 #include <thread>
+#include <filesystem>
 
 #define WIDTH 1200
 #define HEIGHT 600
 
 const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos3_col_tex.vert.spv";
 const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_tex.frag.spv";
+const std::string PMX_PATH = "ying/ying.pmx";
+//const std::string PMX_PATH = "paimeng/paimeng.pmx";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -35,6 +38,7 @@ struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
+    int texID;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription bindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex);
@@ -42,8 +46,8 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{};
+    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions() {
+        std::array<vk::VertexInputAttributeDescription, 4> attributeDescriptions{};
 
         // float: eR32Sfloat
         // vec2: R32G32Sfloat
@@ -63,6 +67,11 @@ struct Vertex {
         attributeDescriptions[2].location = 2;
         attributeDescriptions[2].format = vk::Format::eR32G32Sfloat;
         attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
+        attributeDescriptions[3].binding = 0;
+        attributeDescriptions[3].location = 3;
+        attributeDescriptions[3].format = vk::Format::eR32Uint;
+        attributeDescriptions[3].offset = offsetof(Vertex, texID);
 
         return attributeDescriptions;
     }
@@ -117,16 +126,18 @@ private:
     vk::DeviceMemory vertexBufferMemory;
     vk::Buffer indexBuffer;
     vk::DeviceMemory indexBufferMemory;
-    vk::Image textureImage;
-    vk::DeviceMemory textureImageMemory;
-    vk::ImageView textureImageView;
-    vk::Sampler textureSampler;
+    std::array<vk::Image, 8> textureImage;
+    std::array<vk::DeviceMemory, 8> textureImageMemory;
+    std::array<vk::ImageView, 8> textureImageView;
+    std::array<vk::Sampler, 8> textureSampler;
     std::vector<vk::Buffer> uniformBuffers;
     std::vector<vk::DeviceMemory> uniformBuffersMemory;
 
     vk::Image depthImage;
     vk::DeviceMemory depthImageMemory;
     vk::ImageView depthImageView;
+
+    std::vector<std::filesystem::path> texturePaths;
 
     void initWindow() {
         glfwInit();
@@ -182,13 +193,13 @@ private:
 
         createFramebuffers();
 
+        loadModel();
+
         createTextureImage();
 
         createTextureImageView();
 
         createTextureSampler();
-
-        loadModel();
 
         createVertexBuffer();
 
@@ -399,7 +410,7 @@ private:
         vk::DescriptorSetLayoutBinding samplerLayoutBinding(
             1,
             vk::DescriptorType::eCombinedImageSampler,
-            1,
+            8,
             vk::ShaderStageFlagBits::eFragment,
             nullptr
         );
@@ -639,88 +650,94 @@ private:
     }
 
     void createTextureImage() {
-        int texWidth, texHeight, texChannels;
-        stbi_uc* pixels = stbi_load("assets/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        vk::DeviceSize imageSize = texWidth * texHeight * 4;
+        for (int j=0; j < texturePaths.size(); ++j) {
+            int texWidth, texHeight, texChannels;
+            stbi_uc* pixels = stbi_load(texturePaths[j].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+            vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
-        if (!pixels) {
-            throw std::runtime_error("failed to load texture image!");
-        }
+            if (!pixels) {
+                throw std::runtime_error("failed to load texture image!");
+            }
 
-        vk::Buffer stagingBuffer;
-        vk::DeviceMemory stagingBufferMemory;
-        std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(
-            physicalDevice, device,
-            imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
-        );
-
-        void* data;
-        device.mapMemory(stagingBufferMemory, 0, imageSize, {}, &data);
-        memcpy(data, pixels, static_cast<size_t>(imageSize));
-        device.unmapMemory(stagingBufferMemory);
-
-        stbi_image_free(pixels);
-
-        createImage(
-            texWidth, texHeight,
-            vk::Format::eR8G8B8A8Srgb,
-            vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            textureImage,
-            textureImageMemory
+            vk::Buffer stagingBuffer;
+            vk::DeviceMemory stagingBufferMemory;
+            std::tie(stagingBuffer, stagingBufferMemory) = vklearn::createBuffer(
+                physicalDevice, device,
+                imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
             );
-        
-        vklearn::transitionImageLayout(
-            device, commandPool, graphicsQueue,
-            textureImage,
-            vk::Format::eR8G8B8A8Srgb,
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eTransferDstOptimal);
-        vklearn::copyBufferToImage(
-            device, commandPool, graphicsQueue,
-            stagingBuffer,
-            textureImage,
-            static_cast<uint32_t>(texWidth),
-            static_cast<uint32_t>(texHeight)
-        );
-        vklearn::transitionImageLayout(
-            device, commandPool, graphicsQueue,
-            textureImage,
-            vk::Format::eR8G8B8A8Srgb,
-            vk::ImageLayout::eTransferDstOptimal,
-            vk::ImageLayout::eShaderReadOnlyOptimal
-        );
 
-        device.destroyBuffer(stagingBuffer);
-        device.freeMemory(stagingBufferMemory);
+            void* data;
+            device.mapMemory(stagingBufferMemory, 0, imageSize, {}, &data);
+            memcpy(data, pixels, static_cast<size_t>(imageSize));
+            device.unmapMemory(stagingBufferMemory);
+
+            stbi_image_free(pixels);
+
+            createImage(
+                texWidth, texHeight,
+                vk::Format::eR8G8B8A8Srgb,
+                vk::ImageTiling::eOptimal,
+                vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                vk::MemoryPropertyFlagBits::eDeviceLocal,
+                textureImage[j],
+                textureImageMemory[j]
+                );
+            
+            vklearn::transitionImageLayout(
+                device, commandPool, graphicsQueue,
+                textureImage[j],
+                vk::Format::eR8G8B8A8Srgb,
+                vk::ImageLayout::eUndefined,
+                vk::ImageLayout::eTransferDstOptimal);
+            vklearn::copyBufferToImage(
+                device, commandPool, graphicsQueue,
+                stagingBuffer,
+                textureImage[j],
+                static_cast<uint32_t>(texWidth),
+                static_cast<uint32_t>(texHeight)
+            );
+            vklearn::transitionImageLayout(
+                device, commandPool, graphicsQueue,
+                textureImage[j],
+                vk::Format::eR8G8B8A8Srgb,
+                vk::ImageLayout::eTransferDstOptimal,
+                vk::ImageLayout::eShaderReadOnlyOptimal
+            );
+
+            device.destroyBuffer(stagingBuffer);
+            device.freeMemory(stagingBufferMemory);
+        }
     }
 
     void createTextureImageView() {
-        textureImageView = vklearn::boilerplate::createImageView(device, textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+        for (int j=0; j < texturePaths.size(); ++j) {
+            textureImageView[j] = vklearn::boilerplate::createImageView(device, textureImage[j], vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+        }
     }
 
     void createTextureSampler() {
-        vk::SamplerCreateInfo samplerInfo{};
-        samplerInfo
-            .setMagFilter(vk::Filter::eLinear)
-            .setMinFilter(vk::Filter::eLinear)
-            .setAddressModeU(vk::SamplerAddressMode::eRepeat)
-            .setAddressModeV(vk::SamplerAddressMode::eRepeat)
-            .setAddressModeW(vk::SamplerAddressMode::eRepeat)
-            .setAnisotropyEnable(true)
-            .setMaxAnisotropy(16.0f)
-            .setBorderColor(vk::BorderColor::eIntOpaqueBlack)
-            .setUnnormalizedCoordinates(false)
-            .setCompareEnable(false)
-            .setCompareOp(vk::CompareOp::eAlways)
-            .setMipmapMode(vk::SamplerMipmapMode::eLinear)
-            .setMipLodBias(0.0f)
-            .setMinLod(0.0f)
-            .setMaxLod(0.0f);
+        for (int j=0; j < texturePaths.size(); ++j) {
+            vk::SamplerCreateInfo samplerInfo{};
+            samplerInfo
+                .setMagFilter(vk::Filter::eLinear)
+                .setMinFilter(vk::Filter::eLinear)
+                .setAddressModeU(vk::SamplerAddressMode::eRepeat)
+                .setAddressModeV(vk::SamplerAddressMode::eRepeat)
+                .setAddressModeW(vk::SamplerAddressMode::eRepeat)
+                .setAnisotropyEnable(true)
+                .setMaxAnisotropy(16.0f)
+                .setBorderColor(vk::BorderColor::eIntOpaqueBlack)
+                .setUnnormalizedCoordinates(false)
+                .setCompareEnable(false)
+                .setCompareOp(vk::CompareOp::eAlways)
+                .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+                .setMipLodBias(0.0f)
+                .setMinLod(0.0f)
+                .setMaxLod(0.0f);
 
-        if (device.createSampler(&samplerInfo, nullptr, &textureSampler) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to create texture sampler!");
+            if (device.createSampler(&samplerInfo, nullptr, &textureSampler[j]) != vk::Result::eSuccess) {
+                throw std::runtime_error("failed to create texture sampler!");
+            }
         }
     }
 
@@ -768,29 +785,32 @@ private:
     void loadModel() {
         std::vector<PMXLoader::Vertex> _vertices;
         std::vector<int> _planes;
-        std::tie(_vertices, _planes) = PMXLoader::read_pmx("ying/ying.pmx");
+        std::vector<PMXLoader::Material> _materials;
+        std::tie(_vertices, _planes, texturePaths, _materials) = PMXLoader::read_pmx(PMX_PATH);
 
         vertices = std::vector<Vertex>(_vertices.size());
         for (int j=0; j < _vertices.size(); ++j) {
             auto _pos = _vertices[j].position;
             auto _norm = _vertices[j].normal;
-            glm::vec2 texCoord(0.0f, 0.0f);
-            switch (j%3) {
-                case 0:
-                    texCoord = glm::vec2{1.0f, 1.0f};
-                    break;
-                case 1:
-                    texCoord = glm::vec2{1.0f, 0.0f};
-                    break;
-                case 2:
-                    break;
-            }
+            auto _uv = _vertices[j].uv;
             vertices[j] = {
                 glm::vec3(_pos.x, _pos.y, _pos.z),
                 glm::vec3(_norm.x, _norm.y, _norm.z),
-                texCoord
+                glm::vec2(_uv.x, _uv.y),
+                0
             };
         }
+
+        std::cout << _vertices.size() << "(" << _planes.size() << ")" << std::endl;
+        int cur = 0;
+        for (int j=0; j < _materials.size(); ++j) {
+            std::cout << _materials[j].name << " " << _materials[j].number_of_plane / 3 << std::endl;
+            for (int k=0; k < _materials[j].number_of_plane / 3; ++k) {
+                vertices[cur].texID = _materials[j].normal_texture;
+                cur++;
+            }
+        }
+        std::cout << cur << " ok" << std::endl;
 
         indices = std::vector<uint16_t>(_planes.size());
         for (int j=0; j < _planes.size(); ++j) {
@@ -918,11 +938,14 @@ private:
                 0,
                 sizeof(UniformBufferObject)
             );
-            vk::DescriptorImageInfo imageInfo(
-                textureSampler,
-                textureImageView,
-                vk::ImageLayout::eShaderReadOnlyOptimal
-            );
+            std::array<vk::DescriptorImageInfo, 8> imageInfos{};
+            for (int j=0; j < 8; ++j) {
+                imageInfos[j] = vk::DescriptorImageInfo(
+                    textureSampler[j],
+                    textureImageView[j],
+                    vk::ImageLayout::eShaderReadOnlyOptimal
+                );
+            }
 
             std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
             descriptorWrites[0]
@@ -937,8 +960,8 @@ private:
                 .setDstBinding(1)
                 .setDstArrayElement(0)
                 .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-                .setDescriptorCount(1)
-                .setPImageInfo(&imageInfo);
+                .setDescriptorCount(texturePaths.size())
+                .setPImageInfo(imageInfos.data());
 
             device.updateDescriptorSets(static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
@@ -1177,10 +1200,12 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
-        device.destroySampler(textureSampler);
-        device.destroyImageView(textureImageView);
-        device.destroyImage(textureImage);
-        device.freeMemory(textureImageMemory);
+        for (int j=0; j < texturePaths.size(); ++j) {
+            device.destroySampler(textureSampler[j]);
+            device.destroyImageView(textureImageView[j]);
+            device.destroyImage(textureImage[j]);
+            device.freeMemory(textureImageMemory[j]);
+        }
         device.destroyDescriptorSetLayout(descriptorSetLayout);
         device.destroyBuffer(indexBuffer);
         device.freeMemory(indexBufferMemory);

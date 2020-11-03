@@ -6,6 +6,8 @@
 #include <string>
 #include <ios>
 #include <locale>
+#include <filesystem>
+#include <algorithm>
 
 namespace PMXLoader {
 
@@ -34,14 +36,33 @@ namespace PMXLoader {
     };
 
     struct float2 {
-        float u;
-        float v;
+        float x;
+        float y;
     };
 
     struct Vertex {
         float3 position;
         float3 normal;
         float2 uv;
+    };
+
+    struct Material {
+        std::string name;
+        std::string name_en;
+        float4 diffuse;
+        float3 specular;
+        float specular_coef;
+        float3 ambient;
+        uint8_t drawing_mode;
+        float4 edge_color;
+        float edge_size;
+        int normal_texture;
+        int sphere_texture;
+        uint8_t sphere_mode;
+        bool sharing_toon;
+        int toon_texture;
+        std::string memo;
+        int number_of_plane;
     };
 
     Vertex read_vertex_from_pmx(std::ifstream& in, int number_of_additional_uv, int bone_index_size) {
@@ -98,7 +119,7 @@ namespace PMXLoader {
     }
 
     std::string read_wstring_from_pmx(std::ifstream& in) {
-        std::array<char16_t, 512> buffer;
+        std::array<char16_t, 1024> buffer{};
         std::string output;
         int size;
 
@@ -112,7 +133,12 @@ namespace PMXLoader {
         return output;
     }
 
-    std::tuple<std::vector<Vertex>, std::vector<int>> read_pmx(std::string filename) {
+    std::tuple<
+        std::vector<Vertex>,
+        std::vector<int>,
+        std::vector<std::filesystem::path>,
+        std::vector<Material>> read_pmx(std::string filename) {
+        std::filesystem::path basedir = std::filesystem::path(filename).remove_filename();
         std::ifstream file(filename, std::ios::ate | std::ios::binary);
         if (!file.is_open()) {
             throw std::runtime_error("failed to open file: " + filename);
@@ -130,6 +156,8 @@ namespace PMXLoader {
         std::string comment_en;
         int number_of_vertex;
         int number_of_plane;
+        int number_of_texture;
+        int number_of_material;
         
         file.seekg(0);
         file.read(header, 4*sizeof(char));
@@ -164,6 +192,58 @@ namespace PMXLoader {
             file.read(reinterpret_cast<char*>(&planes[j]), property.vertex_index_size*sizeof(uint8_t));
         }
 
+        file.read(reinterpret_cast<char*>(&number_of_texture), sizeof(int));
+        std::vector<std::filesystem::path> textures(number_of_texture);
+        for (int j = 0; j < number_of_texture; ++j) {
+            std::string p = read_wstring_from_pmx(file);
+            std::replace(p.begin(), p.end(), '\\', '/');
+            textures[j] = basedir / std::filesystem::path(p);
+            //std::cout << textures[j] << std::filesystem::exists(textures[j]) << std::endl;
+        }
+
+        file.read(reinterpret_cast<char*>(&number_of_material), sizeof(int));
+        std::vector<Material> materials(number_of_material);
+        for (int j = 0; j < number_of_material; ++j) {
+            materials[j].name = read_wstring_from_pmx(file);
+            materials[j].name_en = read_wstring_from_pmx(file);
+            file.read(reinterpret_cast<char*>(&materials[j].diffuse), sizeof(float4));
+            file.read(reinterpret_cast<char*>(&materials[j].specular), sizeof(float3));
+            file.read(reinterpret_cast<char*>(&materials[j].specular_coef), sizeof(float));
+            file.read(reinterpret_cast<char*>(&materials[j].ambient), sizeof(float3));
+            file.read(reinterpret_cast<char*>(&materials[j].drawing_mode), sizeof(uint8_t));
+            file.read(reinterpret_cast<char*>(&materials[j].edge_color), sizeof(float4));
+            file.read(reinterpret_cast<char*>(&materials[j].edge_size), sizeof(float));
+            file.read(reinterpret_cast<char*>(&materials[j].normal_texture), property.texture_index_size);
+            file.read(reinterpret_cast<char*>(&materials[j].sphere_texture), property.texture_index_size);
+            file.read(reinterpret_cast<char*>(&materials[j].sphere_mode), sizeof(uint8_t));
+            file.read(reinterpret_cast<char*>(&materials[j].sharing_toon), sizeof(bool));
+            if (materials[j].sharing_toon) {
+                uint8_t share_toon_texture;
+                file.read(reinterpret_cast<char*>(&share_toon_texture), sizeof(uint8_t));
+                materials[j].toon_texture = static_cast<int>(share_toon_texture);
+            } else {
+                switch (property.texture_index_size) {
+                    case 1:
+                        uint8_t tmp1;
+                        file.read(reinterpret_cast<char*>(&tmp1), sizeof(tmp1));
+                        materials[j].toon_texture = static_cast<int>(tmp1);
+                        break;
+                    case 2:
+                        uint16_t tmp2;
+                        file.read(reinterpret_cast<char*>(&tmp2), sizeof(tmp2));
+                        materials[j].toon_texture = static_cast<int>(tmp2);
+                        break;
+                    case 4:
+                        uint32_t tmp4;
+                        file.read(reinterpret_cast<char*>(&tmp4), sizeof(tmp4));
+                        materials[j].toon_texture = static_cast<int>(tmp4);
+                        break;
+                }
+            }
+            materials[j].memo = read_wstring_from_pmx(file);
+            file.read(reinterpret_cast<char*>(&materials[j].number_of_plane), sizeof(int));
+        }
+
         // std::cout << header << " " << ver << std::endl
         //           << static_cast<int>(property_size) << std::endl
         //           << "エンコード方式(0:UTF-16LE, 1:UTF-8) = "
@@ -190,7 +270,7 @@ namespace PMXLoader {
         //           << number_of_plane << std::endl;
         file.close();
 
-        return {vertices, planes};
+        return {vertices, planes, textures, materials};
     }
 
 }
