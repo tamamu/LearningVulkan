@@ -93,8 +93,6 @@ public:
     vk::DescriptorSetLayout descriptorSetLayout;
     vk::PipelineLayout pipelineLayout;
     vk::Pipeline graphicsPipeline;
-    vk::DescriptorPool descriptorPool;
-    std::vector<vk::DescriptorSet> descriptorSets;
     std::string vertexShaderPath;
     std::string fragmentShaderPath;
 
@@ -113,7 +111,6 @@ public:
     }
 
     void destroy() {
-        deviceRef.destroyDescriptorPool(descriptorPool);
         deviceRef.destroyDescriptorSetLayout(descriptorSetLayout);
         deviceRef.destroyPipeline(graphicsPipeline);
         deviceRef.destroyPipelineLayout(pipelineLayout);
@@ -349,7 +346,7 @@ private:
     // vk::DescriptorSetLayout descriptorSetLayout;
     // vk::PipelineLayout pipelineLayout;
     // vk::Pipeline graphicsPipeline;
-    // vk::DescriptorPool descriptorPool;
+    vk::DescriptorPool descriptorPool;
     Renderer* modelRenderer;
     std::vector<vk::DescriptorSet> descriptorSets;
 
@@ -958,7 +955,7 @@ private:
             poolSizes.data()
         );
         
-        if (device.createDescriptorPool(&poolInfo, nullptr, &modelRenderer->descriptorPool) != vk::Result::eSuccess) {
+        if (device.createDescriptorPool(&poolInfo, nullptr, &descriptorPool) != vk::Result::eSuccess) {
             throw std::runtime_error("failed to create descriptor pool!");
         }
     }
@@ -966,7 +963,7 @@ private:
     void createDescriptorSets() {
         std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), modelRenderer->descriptorSetLayout);
         vk::DescriptorSetAllocateInfo allocInfo(
-            modelRenderer->descriptorPool,
+            descriptorPool,
             static_cast<uint32_t>(swapChainImages.size()),
             layouts.data()
         );
@@ -1096,6 +1093,7 @@ private:
         }
 
         modelRenderer->destroy();
+        device.destroyDescriptorPool(descriptorPool);
         device.freeCommandBuffers(commandPool, commandBuffers);
         device.destroyRenderPass(renderPass);
 
