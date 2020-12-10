@@ -83,6 +83,237 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
+class Renderer {
+private:
+    vk::Device& deviceRef;
+    vklearn::SwapChainDetails& swapChainDetails;
+    vk::RenderPass& renderPassRef;
+
+public:
+    vk::DescriptorSetLayout descriptorSetLayout;
+    vk::PipelineLayout pipelineLayout;
+    vk::Pipeline graphicsPipeline;
+    vk::DescriptorPool descriptorPool;
+    std::vector<vk::DescriptorSet> descriptorSets;
+    std::string vertexShaderPath;
+    std::string fragmentShaderPath;
+
+    Renderer(vk::Device& dr, vklearn::SwapChainDetails& scd, vk::RenderPass& rpr, std::string vsp, std::string fsp)
+    : deviceRef(dr), swapChainDetails(scd), renderPassRef(rpr), vertexShaderPath(vsp), fragmentShaderPath(fsp) {
+        recreate();
+    }
+
+    ~Renderer() {
+        destroy();
+    }
+
+    void recreate() {
+        createDescriptorSetLayout();
+        createGraphicsPipeline();
+    }
+
+    void destroy() {
+        deviceRef.destroyDescriptorPool(descriptorPool);
+        deviceRef.destroyDescriptorSetLayout(descriptorSetLayout);
+        deviceRef.destroyPipeline(graphicsPipeline);
+        deviceRef.destroyPipelineLayout(pipelineLayout);
+    }
+
+    // シェーダに渡るデータのレイアウトを設定
+    void createDescriptorSetLayout() {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding(
+            0, // binding
+            vk::DescriptorType::eUniformBuffer,
+            1, // number of values in the array (1 ubo, in here)
+            vk::ShaderStageFlagBits::eVertex, // only referencing from vertex shader
+            nullptr // only relevant for image sampling
+            );
+        vk::DescriptorSetLayoutBinding samplerLayoutBinding(
+            1,
+            vk::DescriptorType::eCombinedImageSampler,
+            8,
+            vk::ShaderStageFlagBits::eFragment,
+            nullptr
+        );
+
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo(
+            {},
+            static_cast<uint32_t>(bindings.size()),
+            bindings.data()
+        );
+
+        if (deviceRef.createDescriptorSetLayout(&layoutInfo, nullptr, &descriptorSetLayout) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
+    // 
+    void createGraphicsPipeline() {
+        vk::ShaderModule vertShaderModule = vklearn::createShaderModuleFromFile(deviceRef, vertexShaderPath);
+        vk::ShaderModule fragShaderModule = vklearn::createShaderModuleFromFile(deviceRef, fragmentShaderPath);
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo(
+            {},
+            vk::ShaderStageFlagBits::eVertex,
+            vertShaderModule,
+            "main");
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo(
+            {},
+            vk::ShaderStageFlagBits::eFragment,
+            fragShaderModule,
+            "main");
+        
+        vk::PipelineShaderStageCreateInfo shaderStages[2] = {vertShaderStageInfo, fragShaderStageInfo};
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo(
+            {},
+            1,
+            &bindingDescription,
+            static_cast<uint32_t>(attributeDescriptions.size()),
+            attributeDescriptions.data()
+        );
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly(
+            {},
+            vk::PrimitiveTopology::eTriangleList,
+            false);
+        vk::Viewport viewport(
+            0.0,
+            0.0,
+            static_cast<float>(swapChainDetails.extent.width),
+            static_cast<float>(swapChainDetails.extent.height),
+            0.0,
+            1.0);
+        vk::Rect2D scissor({0, 0}, swapChainDetails.extent);
+        vk::PipelineViewportStateCreateInfo viewportState(
+            {},
+            1,
+            &viewport,
+            1,
+            &scissor);
+        vk::PipelineRasterizationStateCreateInfo rasterizer(
+            {},
+            false,
+            false,
+            vk::PolygonMode::eFill,
+            vk::CullModeFlagBits::eBack,
+            vk::FrontFace::eCounterClockwise,
+            false,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+        );
+        vk::PipelineMultisampleStateCreateInfo multisampling(
+            {},
+            vk::SampleCountFlagBits::e1,
+            false,
+            1.0,
+            nullptr,
+            false,
+            false
+        );
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment(
+            false,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eZero,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eZero,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR |
+            vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB |
+            vk::ColorComponentFlagBits::eA
+        );
+
+        //// enable color blending
+        // vk::PipelineColorBlendAttachmentState colorBlendAttachment(
+        //     true,
+        //     vk::BlendFactor::eSrc1Alpha,
+        //     vk::BlendFactor::eOneMinusSrc1Alpha,
+        //     vk::BlendOp::eAdd,
+        //     vk::BlendFactor::eOne,
+        //     vk::BlendFactor::eZero,
+        //     vk::BlendOp::eAdd,
+        //     vk::ColorComponentFlagBits::eR |
+        //     vk::ColorComponentFlagBits::eG |
+        //     vk::ColorComponentFlagBits::eB |
+        //     vk::ColorComponentFlagBits::eA
+        // );
+        vk::PipelineColorBlendStateCreateInfo colorBlending(
+            {},
+            false,
+            vk::LogicOp::eCopy,
+            1,
+            &colorBlendAttachment,
+            {0.0, 0.0, 0.0, 0.0}
+        );
+
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = true;
+        depthStencil.depthWriteEnable = true;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+        depthStencil.depthBoundsTestEnable = false;
+        depthStencil.minDepthBounds = 0.0f;
+        depthStencil.maxDepthBounds = 1.0f;
+        depthStencil.stencilTestEnable = false;
+
+        vk::DynamicState dynamicStates[2] = {
+            vk::DynamicState::eViewport,
+            vk::DynamicState::eLineWidth
+        };
+
+        vk::PipelineDynamicStateCreateInfo dynamicState(
+            {},
+            2,
+            dynamicStates
+        );
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
+            {},
+            1, // descriptorSetLayoutCount
+            &descriptorSetLayout, // descriptorSetLayouts
+            0,
+            nullptr
+        );
+        
+        if (deviceRef.createPipelineLayout(&pipelineLayoutInfo, nullptr, &pipelineLayout) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create pipeline layout!");
+        }
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo(
+            {},
+            2,
+            shaderStages,
+            &vertexInputInfo,
+            &inputAssembly,
+            nullptr,
+            &viewportState,
+            &rasterizer,
+            &multisampling,
+            &depthStencil,
+            &colorBlending,
+            nullptr,
+            pipelineLayout,
+            renderPassRef,
+            0,
+            nullptr,
+            -1
+        );
+        if (deviceRef.createGraphicsPipelines(nullptr, 1, &pipelineInfo, nullptr, &graphicsPipeline) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create graphics pipeline!");
+        }
+
+        deviceRef.destroyShaderModule(fragShaderModule);
+        deviceRef.destroyShaderModule(vertShaderModule);
+        // TODO: https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Shader_modules#page_Shader-stage-creation
+    }
+    
+};
+
 class VulkanApp {
 public:
     void run() {
@@ -102,13 +333,7 @@ private:
     vklearn::SwapChainDetails swapChainDetails;
     std::vector<vk::Image> swapChainImages;
     std::vector<vk::ImageView> swapChainImageViews;
-    vk::RenderPass renderPass;
-    vk::DescriptorSetLayout descriptorSetLayout;
-    vk::PipelineLayout pipelineLayout;
-    vk::Pipeline graphicsPipeline;
     std::vector<vk::Framebuffer> swapChainFramebuffers;
-    vk::DescriptorPool descriptorPool;
-    std::vector<vk::DescriptorSet> descriptorSets;
     vk::CommandPool commandPool;
     std::vector<vk::CommandBuffer> commandBuffers;
     std::vector<vk::Semaphore> imageAvailableSemaphores;
@@ -119,6 +344,14 @@ private:
     GLFWwindow* window;
     size_t currentFrame = 0;
     bool framebufferResized = false;
+
+    vk::RenderPass renderPass;
+    // vk::DescriptorSetLayout descriptorSetLayout;
+    // vk::PipelineLayout pipelineLayout;
+    // vk::Pipeline graphicsPipeline;
+    // vk::DescriptorPool descriptorPool;
+    Renderer* modelRenderer;
+    std::vector<vk::DescriptorSet> descriptorSets;
 
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;
@@ -182,9 +415,11 @@ private:
 
         createRenderPass();
 
-        createDescriptorSetLayout();
+        modelRenderer = new Renderer(device, swapChainDetails, renderPass, VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH);
 
-        createGraphicsPipeline();
+        // createDescriptorSetLayout();
+
+        // createGraphicsPipeline();
 
 
         createCommandPool();
@@ -397,197 +632,6 @@ private:
         if (device.createRenderPass(&renderPassInfo, nullptr, &renderPass) != vk::Result::eSuccess) {
             throw std::runtime_error("failed to create render pass!");
         }
-    }
-
-    void createDescriptorSetLayout() {
-        vk::DescriptorSetLayoutBinding uboLayoutBinding(
-            0, // binding
-            vk::DescriptorType::eUniformBuffer,
-            1, // number of values in the array (1 ubo, in here)
-            vk::ShaderStageFlagBits::eVertex, // only referencing from vertex shader
-            nullptr // only relevant for image sampling
-            );
-        vk::DescriptorSetLayoutBinding samplerLayoutBinding(
-            1,
-            vk::DescriptorType::eCombinedImageSampler,
-            8,
-            vk::ShaderStageFlagBits::eFragment,
-            nullptr
-        );
-
-        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
-
-        vk::DescriptorSetLayoutCreateInfo layoutInfo(
-            {},
-            static_cast<uint32_t>(bindings.size()),
-            bindings.data()
-        );
-
-        if (device.createDescriptorSetLayout(&layoutInfo, nullptr, &descriptorSetLayout) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-    }
-
-    void createGraphicsPipeline() {
-        vk::ShaderModule vertShaderModule = vklearn::createShaderModuleFromFile(device, VERTEX_SHADER_PATH);
-        vk::ShaderModule fragShaderModule = vklearn::createShaderModuleFromFile(device, FRAGMENT_SHADER_PATH);
-
-        vk::PipelineShaderStageCreateInfo vertShaderStageInfo(
-            {},
-            vk::ShaderStageFlagBits::eVertex,
-            vertShaderModule,
-            "main");
-        vk::PipelineShaderStageCreateInfo fragShaderStageInfo(
-            {},
-            vk::ShaderStageFlagBits::eFragment,
-            fragShaderModule,
-            "main");
-        
-        vk::PipelineShaderStageCreateInfo shaderStages[2] = {vertShaderStageInfo, fragShaderStageInfo};
-        auto bindingDescription = Vertex::getBindingDescription();
-        auto attributeDescriptions = Vertex::getAttributeDescriptions();
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo(
-            {},
-            1,
-            &bindingDescription,
-            static_cast<uint32_t>(attributeDescriptions.size()),
-            attributeDescriptions.data()
-        );
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly(
-            {},
-            vk::PrimitiveTopology::eTriangleList,
-            false);
-        vk::Viewport viewport(
-            0.0,
-            0.0,
-            static_cast<float>(swapChainDetails.extent.width),
-            static_cast<float>(swapChainDetails.extent.height),
-            0.0,
-            1.0);
-        vk::Rect2D scissor({0, 0}, swapChainDetails.extent);
-        vk::PipelineViewportStateCreateInfo viewportState(
-            {},
-            1,
-            &viewport,
-            1,
-            &scissor);
-        vk::PipelineRasterizationStateCreateInfo rasterizer(
-            {},
-            false,
-            false,
-            vk::PolygonMode::eFill,
-            vk::CullModeFlagBits::eBack,
-            vk::FrontFace::eCounterClockwise,
-            false,
-            0.0,
-            0.0,
-            0.0,
-            1.0
-        );
-        vk::PipelineMultisampleStateCreateInfo multisampling(
-            {},
-            vk::SampleCountFlagBits::e1,
-            false,
-            1.0,
-            nullptr,
-            false,
-            false
-        );
-        vk::PipelineColorBlendAttachmentState colorBlendAttachment(
-            false,
-            vk::BlendFactor::eOne,
-            vk::BlendFactor::eZero,
-            vk::BlendOp::eAdd,
-            vk::BlendFactor::eOne,
-            vk::BlendFactor::eZero,
-            vk::BlendOp::eAdd,
-            vk::ColorComponentFlagBits::eR |
-            vk::ColorComponentFlagBits::eG |
-            vk::ColorComponentFlagBits::eB |
-            vk::ColorComponentFlagBits::eA
-        );
-
-        //// enable color blending
-        // vk::PipelineColorBlendAttachmentState colorBlendAttachment(
-        //     true,
-        //     vk::BlendFactor::eSrc1Alpha,
-        //     vk::BlendFactor::eOneMinusSrc1Alpha,
-        //     vk::BlendOp::eAdd,
-        //     vk::BlendFactor::eOne,
-        //     vk::BlendFactor::eZero,
-        //     vk::BlendOp::eAdd,
-        //     vk::ColorComponentFlagBits::eR |
-        //     vk::ColorComponentFlagBits::eG |
-        //     vk::ColorComponentFlagBits::eB |
-        //     vk::ColorComponentFlagBits::eA
-        // );
-        vk::PipelineColorBlendStateCreateInfo colorBlending(
-            {},
-            false,
-            vk::LogicOp::eCopy,
-            1,
-            &colorBlendAttachment,
-            {0.0, 0.0, 0.0, 0.0}
-        );
-
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-        depthStencil.depthTestEnable = true;
-        depthStencil.depthWriteEnable = true;
-        depthStencil.depthCompareOp = vk::CompareOp::eLess;
-        depthStencil.depthBoundsTestEnable = false;
-        depthStencil.minDepthBounds = 0.0f;
-        depthStencil.maxDepthBounds = 1.0f;
-        depthStencil.stencilTestEnable = false;
-
-        vk::DynamicState dynamicStates[2] = {
-            vk::DynamicState::eViewport,
-            vk::DynamicState::eLineWidth
-        };
-
-        vk::PipelineDynamicStateCreateInfo dynamicState(
-            {},
-            2,
-            dynamicStates
-        );
-
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
-            {},
-            1, // descriptorSetLayoutCount
-            &descriptorSetLayout, // descriptorSetLayouts
-            0,
-            nullptr
-        );
-        
-        if (device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &pipelineLayout) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to create pipeline layout!");
-        }
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo(
-            {},
-            2,
-            shaderStages,
-            &vertexInputInfo,
-            &inputAssembly,
-            nullptr,
-            &viewportState,
-            &rasterizer,
-            &multisampling,
-            &depthStencil,
-            &colorBlending,
-            nullptr,
-            pipelineLayout,
-            renderPass,
-            0,
-            nullptr,
-            -1
-        );
-        if (device.createGraphicsPipelines(nullptr, 1, &pipelineInfo, nullptr, &graphicsPipeline) != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to create graphics pipeline!");
-        }
-
-        device.destroyShaderModule(fragShaderModule);
-        device.destroyShaderModule(vertShaderModule);
-        // TODO: https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Shader_modules#page_Shader-stage-creation
     }
 
     void createFramebuffers() {
@@ -914,15 +958,15 @@ private:
             poolSizes.data()
         );
         
-        if (device.createDescriptorPool(&poolInfo, nullptr, &descriptorPool) != vk::Result::eSuccess) {
+        if (device.createDescriptorPool(&poolInfo, nullptr, &modelRenderer->descriptorPool) != vk::Result::eSuccess) {
             throw std::runtime_error("failed to create descriptor pool!");
         }
     }
 
     void createDescriptorSets() {
-        std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+        std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), modelRenderer->descriptorSetLayout);
         vk::DescriptorSetAllocateInfo allocInfo(
-            descriptorPool,
+            modelRenderer->descriptorPool,
             static_cast<uint32_t>(swapChainImages.size()),
             layouts.data()
         );
@@ -1006,14 +1050,14 @@ private:
                 clearValues.data()
             );
             commandBuffers[idx].beginRenderPass(&renderPassInfo, vk::SubpassContents::eInline);
-            commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+            commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, modelRenderer->graphicsPipeline);
             // commandBuffers[idx].draw(3, 1, 0, 0);
             // commandBuffers[idx].endRenderPass();
             vk::Buffer vertexBuffers[] = {vertexBuffer};
             vk::DeviceSize offsets[] = {0};
             commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
             commandBuffers[idx].bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint16);
-            commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
+            commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, modelRenderer->pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
             commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             commandBuffers[idx].end();
         }
@@ -1051,10 +1095,8 @@ private:
             device.freeMemory(uniformBuffersMemory[idx]);
         }
 
-        device.destroyDescriptorPool(descriptorPool);
+        modelRenderer->destroy();
         device.freeCommandBuffers(commandPool, commandBuffers);
-        device.destroyPipeline(graphicsPipeline);
-        device.destroyPipelineLayout(pipelineLayout);
         device.destroyRenderPass(renderPass);
 
         for (size_t idx = 0; idx < swapChainImageViews.size(); idx++) {
@@ -1079,7 +1121,7 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
-        createGraphicsPipeline();
+        modelRenderer->recreate();
         createDepthResources();
         createFramebuffers();
         createUniformBuffers();
@@ -1206,7 +1248,7 @@ private:
             device.destroyImage(textureImage[j]);
             device.freeMemory(textureImageMemory[j]);
         }
-        device.destroyDescriptorSetLayout(descriptorSetLayout);
+
         device.destroyBuffer(indexBuffer);
         device.freeMemory(indexBufferMemory);
         device.destroyBuffer(vertexBuffer);
