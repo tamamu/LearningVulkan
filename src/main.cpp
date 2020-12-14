@@ -27,8 +27,9 @@
 #define WIDTH 1200
 #define HEIGHT 600
 
-const std::string VERTEX_SHADER_PATH = "spir-v/mvp_pos3_col_tex.vert.spv";
-const std::string FRAGMENT_SHADER_PATH = "spir-v/static_in_tex.frag.spv";
+const std::string MODEL_VERTEX_SHADER_PATH = "spir-v/toon_model.vert.spv";
+const std::string EDGE_VERTEX_SHADER_PATH = "spir-v/toon_edge.vert.spv";
+const std::string FRAGMENT_SHADER_PATH = "spir-v/toon_tex.frag.spv";
 const std::string PMX_PATH = "ying/ying.pmx";
 //const std::string PMX_PATH = "paimeng/paimeng.pmx";
 
@@ -81,6 +82,7 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 invModel;
 };
 
 class Renderer {
@@ -95,9 +97,10 @@ public:
     vk::Pipeline graphicsPipeline;
     std::string vertexShaderPath;
     std::string fragmentShaderPath;
+    vk::CullModeFlags cullModeFlags;
 
-    Renderer(vk::Device& dr, vklearn::SwapChainDetails& scd, vk::RenderPass& rpr, std::string vsp, std::string fsp)
-    : deviceRef(dr), swapChainDetails(scd), renderPassRef(rpr), vertexShaderPath(vsp), fragmentShaderPath(fsp) {
+    Renderer(vk::Device& dr, vklearn::SwapChainDetails& scd, vk::RenderPass& rpr, std::string vsp, std::string fsp, vk::CullModeFlags cmf)
+    : deviceRef(dr), swapChainDetails(scd), renderPassRef(rpr), vertexShaderPath(vsp), fragmentShaderPath(fsp), cullModeFlags(cmf) {
         recreate();
     }
 
@@ -122,7 +125,7 @@ public:
             0, // binding
             vk::DescriptorType::eUniformBuffer,
             1, // number of values in the array (1 ubo, in here)
-            vk::ShaderStageFlagBits::eVertex, // only referencing from vertex shader
+            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, // only referencing from vertex shader
             nullptr // only relevant for image sampling
             );
         vk::DescriptorSetLayoutBinding samplerLayoutBinding(
@@ -195,7 +198,7 @@ public:
             false,
             false,
             vk::PolygonMode::eFill,
-            vk::CullModeFlagBits::eBack,
+            cullModeFlags,
             vk::FrontFace::eCounterClockwise,
             false,
             0.0,
@@ -348,6 +351,7 @@ private:
     // vk::Pipeline graphicsPipeline;
     vk::DescriptorPool descriptorPool;
     Renderer* modelRenderer;
+    Renderer* edgeRenderer;
     std::vector<vk::DescriptorSet> descriptorSets;
 
     std::vector<Vertex> vertices;
@@ -412,7 +416,8 @@ private:
 
         createRenderPass();
 
-        modelRenderer = new Renderer(device, swapChainDetails, renderPass, VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH);
+        modelRenderer = new Renderer(device, swapChainDetails, renderPass, MODEL_VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH, vk::CullModeFlagBits::eBack);
+        edgeRenderer = new Renderer(device, swapChainDetails, renderPass, EDGE_VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH, vk::CullModeFlagBits::eFront);
 
         // createDescriptorSetLayout();
 
@@ -1037,7 +1042,7 @@ private:
                 throw std::runtime_error("failed to begin recording command buffer!");
             }
             std::array<vk::ClearValue, 2> clearValues{};
-            clearValues[0].color = vk::ClearColorValue(std::array<float, 4>{0.0, 0.0, 0.0, 1.0});
+            clearValues[0].color = vk::ClearColorValue(std::array<float, 4>{1.0, 1.0, 1.0, 1.0});
             clearValues[1].depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
             vk::RenderPassBeginInfo renderPassInfo(
                 renderPass,
@@ -1055,6 +1060,11 @@ private:
             commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
             commandBuffers[idx].bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint16);
             commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, modelRenderer->pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
+            commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+
+            
+            commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, edgeRenderer->graphicsPipeline);
+            commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, edgeRenderer->pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
             commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             commandBuffers[idx].end();
         }
@@ -1230,6 +1240,7 @@ private:
             40.0f
         );
         ubo.proj[1][1] *= -1; // Y coordinate upside down
+        ubo.invModel = glm::inverse(ubo.model);
 
         void* data;
         device.mapMemory(uniformBuffersMemory[currentImage], 0, sizeof(ubo), {}, &data);
