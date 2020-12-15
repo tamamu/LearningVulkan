@@ -354,6 +354,7 @@ private:
     Renderer* edgeRenderer;
     std::vector<vk::DescriptorSet> descriptorSets;
 
+    std::vector<uint32_t> vertexCounts;
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;
     vk::Buffer vertexBuffer;
@@ -850,6 +851,7 @@ private:
         std::cout << _vertices.size() << "(" << _planes.size() << ")" << std::endl;
         int cur = 0;
         for (int j=0; j < _materials.size(); ++j) {
+            vertexCounts.push_back(_materials[j].number_of_plane);
             std::cout << _materials[j].name << " " << _materials[j].number_of_plane / 3 << std::endl;
             for (int k=0; k < _materials[j].number_of_plane / 3; ++k) {
                 vertices[cur].texID = _materials[j].normal_texture;
@@ -1060,12 +1062,20 @@ private:
             commandBuffers[idx].bindVertexBuffers(0, 1, vertexBuffers, offsets);
             commandBuffers[idx].bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint16);
             commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, modelRenderer->pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
-            commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            uint32_t firstIndex = 0;
+            for (int j=0; j < vertexCounts.size(); ++j) {
+                commandBuffers[idx].drawIndexed(vertexCounts[j], 1, firstIndex, 0, 0);
+                firstIndex += vertexCounts[j];
+            }
 
             
             commandBuffers[idx].bindPipeline(vk::PipelineBindPoint::eGraphics, edgeRenderer->graphicsPipeline);
             commandBuffers[idx].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, edgeRenderer->pipelineLayout, 0, 1, &descriptorSets[idx], 0, nullptr);
-            commandBuffers[idx].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            firstIndex = 0;
+            for (int j=0; j < vertexCounts.size(); ++j) {
+                commandBuffers[idx].drawIndexed(vertexCounts[j], 1, firstIndex, 0, 0);
+                firstIndex += vertexCounts[j];
+            }
             commandBuffers[idx].end();
         }
     }
