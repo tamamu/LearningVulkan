@@ -15,7 +15,7 @@ spir-v/%.frag.spv: src/shaders/%.frag
 
 release: src/*.cpp src/*.hpp src/*.h $(GLSLS)
 	mkdir -p bin
-	$(CXX) $(CFLAGS) -o bin/VulkanApp src/main.cpp $(LDFLAGS)
+	$(CXX) $(CFLAGS) -o bin/VulkanApp src/main.cpp $(LDFLAGS) -DNDEBUG
 
 debug: src/main.cpp $(GLSLS)
 	$(CXX) $(CFLAGS) src/main.cpp $(LDFLAGS)

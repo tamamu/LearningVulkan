@@ -363,7 +363,7 @@ namespace vklearn {
         return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
     }
 
-    void transitionImageLayout(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Image image, vk::Format format, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+    void transitionImageLayout(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Image image, vk::Format format, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) {
         vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
 
         vk::ImageMemoryBarrier barrier{};
@@ -375,7 +375,7 @@ namespace vklearn {
         barrier.subresourceRange = vk::ImageSubresourceRange(
             vk::ImageAspectFlagBits::eColor,
             0,  // baseMipLevel
-            1,  // levelCount
+            mipLevels,  // levelCount
             0,  // baseArrayLayer
             1   // layerCount
         );
@@ -588,7 +588,7 @@ namespace vklearn {
             return std::make_tuple(swapChain, details);
         }
 
-        vk::ImageView createImageView(vk::Device device, vk::Image image, vk::Format format, vk::ImageAspectFlags aspectFlags) {
+        vk::ImageView createImageView(vk::Device device, vk::Image image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels) {
             vk::ImageViewCreateInfo viewInfo{};
             viewInfo.image = image;
             viewInfo.viewType = vk::ImageViewType::e2D;
@@ -596,7 +596,7 @@ namespace vklearn {
             viewInfo.subresourceRange = vk::ImageSubresourceRange(
                     aspectFlags,
                     0,
-                    1,
+                    mipLevels,
                     0,
                     1);
             
