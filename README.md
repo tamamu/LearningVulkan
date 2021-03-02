@@ -2,7 +2,7 @@
 
 # TODO
 
-Next => https://vulkan-tutorial.com/Vertex_buffers/Staging_buffer
+Next => https://vulkan-tutorial.com/Loading_models#page_Vertex-deduplication
 
 # Requirements
 

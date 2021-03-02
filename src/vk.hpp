@@ -9,6 +9,7 @@
 #include <set>
 #include <optional>
 #include <algorithm>
+#include <tuple>
 #include <vulkan/vulkan.hpp>
 
 /// NOTE: PFN/pfn denotes that a type is a function pointer, or that a variable is of a pointer type.
@@ -213,6 +214,11 @@ namespace vklearn {
             return 0;
         }
 
+        if (!features.samplerAnisotropy) {
+            std::cerr << "Not supported: Sampler Anisotropy" << std::endl;
+            return 0;
+        }
+
         if (!indices.isComplete()) {
             std::cerr << "Not found: Required queue families" << std::endl;
             return 0;
@@ -310,7 +316,7 @@ namespace vklearn {
         return shaderModule;
     }
 
-    uint32_t findMemoryType(vk::PhysicalDevice physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlagBits properties) {
+    uint32_t findMemoryType(vk::PhysicalDevice physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
         vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
 
         for (uint32_t i=0; i < memProperties.memoryTypeCount; ++i) {
@@ -320,6 +326,177 @@ namespace vklearn {
         }
 
         throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    vk::CommandBuffer beginSingleTimeCommands(vk::Device device, vk::CommandPool commandPool) {
+        vk::CommandBufferAllocateInfo allocInfo(
+            commandPool,
+            vk::CommandBufferLevel::ePrimary,
+            1
+        );
+
+        vk::CommandBuffer commandBuffer;
+        device.allocateCommandBuffers(&allocInfo, &commandBuffer);
+
+        vk::CommandBufferBeginInfo beginInfo(
+            vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+        );
+
+        commandBuffer.begin(&beginInfo);
+
+        return commandBuffer;
+    }
+
+    void endSingleTimeCommands(vk::Device device, vk::CommandPool commandPool, vk::CommandBuffer commandBuffer, vk::Queue queue) {
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        queue.submit(1, &submitInfo, nullptr);
+        queue.waitIdle();
+
+        device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+    }
+
+    bool hasStencilComponent(vk::Format format) {
+        return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
+    }
+
+    void transitionImageLayout(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Image image, vk::Format format, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) {
+        vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
+
+        vk::ImageMemoryBarrier barrier{};
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = 0;
+        barrier.dstQueueFamilyIndex = 0;
+        barrier.image = image;
+        barrier.subresourceRange = vk::ImageSubresourceRange(
+            vk::ImageAspectFlagBits::eColor,
+            0,  // baseMipLevel
+            mipLevels,  // levelCount
+            0,  // baseArrayLayer
+            1   // layerCount
+        );
+        if (newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+            if (hasStencilComponent(format)) {
+                barrier.subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
+            }
+        } else {
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        }
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = {};
+
+        vk::PipelineStageFlags sourceStage, destinationStage;
+
+        if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+            destinationStage = vk::PipelineStageFlagBits::eTransfer;
+        } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+            sourceStage = vk::PipelineStageFlagBits::eTransfer;
+            destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+        } else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+
+            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+            destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        } else {
+            throw std::invalid_argument("unsupported layout transition!");
+        }
+
+        commandBuffer.pipelineBarrier(
+            sourceStage, destinationStage,
+            {},
+            0, nullptr,
+            0, nullptr,
+            1, &barrier
+        );
+
+        endSingleTimeCommands(device, commandPool, commandBuffer, graphicsQueue);
+    }
+
+    void copyBufferToImage(vk::Device device, vk::CommandPool commandPool, vk::Queue graphicsQueue, vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height) {
+        vk::CommandBuffer commandBuffer = beginSingleTimeCommands(device, commandPool);
+
+        vk::BufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+
+        region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+
+        region.imageOffset.x = 0;
+        region.imageOffset.y = 0;
+        region.imageOffset.z = 0;
+
+        region.imageExtent.width = width;
+        region.imageExtent.height = height;
+        region.imageExtent.depth = 1;
+
+        commandBuffer.copyBufferToImage(
+            buffer,
+            image,
+            vk::ImageLayout::eTransferDstOptimal,
+            1,
+            &region
+        );
+
+        endSingleTimeCommands(device, commandPool, commandBuffer, graphicsQueue);
+    }
+
+    std::tuple<vk::Buffer, vk::DeviceMemory> createBuffer(vk::PhysicalDevice physicalDevice, vk::Device device, vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties) {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo
+            .setSize(size)
+            .setUsage(usage)
+            .setSharingMode(vk::SharingMode::eExclusive);
+        vk::Buffer buffer;
+        vk::DeviceMemory bufferMemory;
+
+        if (device.createBuffer(&bufferInfo, nullptr, &buffer) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create buffer");
+        }
+
+        vk::MemoryRequirements memRequirements;
+        device.getBufferMemoryRequirements(buffer, &memRequirements);
+
+        vk::MemoryAllocateInfo allocInfo(memRequirements.size, findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties));
+
+        if (device.allocateMemory(&allocInfo, nullptr, &bufferMemory) != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to allocate buffer memory!");
+        }
+
+        device.bindBufferMemory(buffer, bufferMemory, 0);
+
+        return {buffer, bufferMemory};
+    }
+
+    vk::Format findSupportedFormat(vk::PhysicalDevice physicalDevice, const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features) {
+        for (vk::Format format : candidates) {
+            vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+            if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+                return format;
+            } else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("failed to find supported format!");
     }
 
     namespace boilerplate
@@ -410,6 +587,26 @@ namespace vklearn {
             SwapChainDetails details(surfaceFormat, presentMode, extent);
 
             return std::make_tuple(swapChain, details);
+        }
+
+        vk::ImageView createImageView(vk::Device device, vk::Image image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels) {
+            vk::ImageViewCreateInfo viewInfo{};
+            viewInfo.image = image;
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = vk::ImageSubresourceRange(
+                    aspectFlags,
+                    0,
+                    mipLevels,
+                    0,
+                    1);
+            
+            vk::ImageView imageView;
+            if (device.createImageView(&viewInfo, nullptr, &imageView) != vk::Result::eSuccess) {
+                throw std::runtime_error("failed to create texture image view!");
+            }
+
+            return imageView;
         }
 
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT(PFN_vkDebugUtilsMessengerCallbackEXT pfnUserCallback) {
