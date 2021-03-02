@@ -11,6 +11,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <bitset>
 #include <vector>
 #include <map>
 #include <set>
@@ -170,7 +171,11 @@ private:
 
     void createSurface() {
         VkSurfaceKHR _surface;
-        if (glfwCreateWindowSurface(instance, window, nullptr, &_surface) != VK_SUCCESS) {
+	VkResult res;
+        if ((res = glfwCreateWindowSurface(instance, window, nullptr, &_surface)) != VK_SUCCESS) {
+		std::cout << "glfw error:" << std::hex << glfwGetError(NULL) << std::dec << std::endl;
+		std::cout << "support:" << glfwVulkanSupported() << std::endl;
+		std::cout << "result:" << res << std::endl;
             throw std::runtime_error("failed to create window surface!");
         }
         surface = vk::SurfaceKHR(_surface);

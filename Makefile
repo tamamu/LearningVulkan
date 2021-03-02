@@ -1,6 +1,6 @@
 CFLAGS = -std=c++17 -Wall -Wextra
 LDFLAGS = `pkg-config --static --libs glfw3` -lvulkan
-CXX = clang++
+CXX = g++
 GLSLS = $(foreach glsl,$(shell ls src/shaders),spir-v/$(notdir $(glsl)).spv)
 .SUFFIXES: .vert .frag
 .PHONY: spir-v/%.spv test clean

@@ -94,6 +94,7 @@ namespace vklearn {
 
         // NOTE: initialize with first iterator and last iterator.
         std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+	for (auto name: extensions) { std::cout << name << std::endl; }
 
         if (enableValidationLayers) {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
